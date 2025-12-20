@@ -16,19 +16,16 @@ st.set_page_config(
 # --- CSS Global: Estilização da Tabela ---
 st.markdown("""
     <style>
-    /* ALINHAMENTO ESPECÍFICO PEDIDO */
-    
     /* Cabeçalhos (th) alinhados à DIREITA */
     [data-testid="stDataFrame"] table tr th {
         text-align: right !important;
     }
     
-    /* Células de Dados (td) alinhadas à ESQUERDA (mantendo pedido anterior) */
+    /* Células de Dados (td) alinhadas à ESQUERDA */
     [data-testid="stDataFrame"] table tr td {
         text-align: left !important;
     }
     
-    /* Ajuste do container para garantir que o CSS pegue */
     div[data-testid="stDataFrame"] div[class*="stDataFrame"] {
         text-align: left;
     }
@@ -58,7 +55,6 @@ def clean_fundamentus_col(x):
     return 0.0
 
 def format_short_number(val):
-    """Formata para exibição no gráfico (15.2B, 300M)"""
     if pd.isna(val) or val == 0: return ""
     abs_val = abs(val)
     if abs_val >= 1e9:
@@ -234,7 +230,7 @@ if not df_ranking.empty:
 
     st.divider()
 
-    # 3. Gráfico
+    # 3. Gráfico Travado e Fixo
     st.subheader("📈 Evolução: Cotação vs Lucro vs Receita")
     
     options = df_ranking['Ativo'].tolist()
@@ -264,14 +260,14 @@ if not df_ranking.empty:
                 yaxis='y1' 
             ))
 
-            # EIXO Y2: LUCRO
+            # EIXO Y2: LUCRO LÍQUIDO (AGORA VERMELHO)
             fig.add_trace(go.Scatter(
                 x=df_chart['Periodo'], 
                 y=df_chart['Lucro'],
                 name="Lucro Líquido", 
                 mode='lines+markers',
-                line=dict(color='#008000', width=3, shape='spline', smoothing=1.3),
-                marker=dict(size=9, color='#008000'),
+                line=dict(color='red', width=3, shape='spline', smoothing=1.3), # Cor Vermelha
+                marker=dict(size=9, color='red'), # Cor Vermelha
                 yaxis='y2' 
             ))
 
@@ -288,18 +284,48 @@ if not df_ranking.empty:
 
             fig.update_layout(
                 title=f"{selected}: Correlação Visual (Proporcional)",
-                xaxis=dict(type='category', title="Período"),
+                # Define tamanho fixo no Layout
+                height=500,
                 
+                # Desabilita o "Arrastar" (Pan)
+                dragmode=False,
+                
+                xaxis=dict(
+                    type='category', 
+                    title="Período",
+                    fixedrange=True # TRAVA EIXO X (Sem Zoom)
+                ),
+                
+                # Eixo 1: Receita
                 yaxis=dict(
-                    title="Receita (R$)", side="left", showgrid=False, title_font=dict(color="#696969")
+                    title="Receita (R$)", 
+                    side="left", 
+                    showgrid=False, 
+                    title_font=dict(color="#696969"),
+                    fixedrange=True # TRAVA EIXO Y1
                 ),
+                
+                # Eixo 2: Lucro (Vermelho)
                 yaxis2=dict(
-                    title="Lucro Líquido (R$)", side="right", overlaying="y", showgrid=False,
-                    title_font=dict(color="green"), tickfont=dict(color="green")
+                    title="Lucro Líquido (R$)", 
+                    side="right", 
+                    overlaying="y", 
+                    showgrid=False,
+                    title_font=dict(color="red"), # Texto Vermelho
+                    tickfont=dict(color="red"),   # Texto Vermelho
+                    fixedrange=True # TRAVA EIXO Y2
                 ),
+                
+                # Eixo 3: Cotação
                 yaxis3=dict(
-                    title="Cotação (R$)", side="right", overlaying="y", position=0.95, 
-                    showgrid=False, showticklabels=False, title_font=dict(color="blue")
+                    title="Cotação (R$)", 
+                    side="right", 
+                    overlaying="y", 
+                    position=0.95, 
+                    showgrid=False, 
+                    showticklabels=False, 
+                    title_font=dict(color="blue"),
+                    fixedrange=True # TRAVA EIXO Y3
                 ),
                 
                 legend=dict(orientation="h", y=1.1, x=0),
@@ -308,7 +334,15 @@ if not df_ranking.empty:
                 margin=dict(t=80)
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            # Configuração para desativar barra de ferramentas e zoom
+            config = {
+                'displayModeBar': False, # Remove botões do topo
+                'scrollZoom': False,     # Remove zoom com scroll do mouse
+                'showTips': False,
+                'doubleClick': False,
+            }
+            
+            st.plotly_chart(fig, use_container_width=True, config=config)
             st.caption("Nota: 'Últimos 12m' representa o acumulado dos 4 últimos trimestres (TTM).")
         else:
             st.warning("Dados indisponíveis para este ativo.")
