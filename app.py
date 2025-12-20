@@ -1,3 +1,16 @@
+st.set_page_config(
+    page_title="Ranking Melhores Ações Ibovespa agora - Fundamentalista", # Título que aparece na aba e no Google
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://ibovfundamentos.streamlit.app',
+        'Report a bug': "https://ibovfundamentos.streamlit.app/",
+        'About': "# Blog de Análise Fundamentalista, lucro líquido, ev/ebitda, gráfico, notícias ações."
+    }
+)
+
+
 import streamlit as st
 import pandas as pd
 import fundamentus
@@ -371,3 +384,4 @@ with c2:
         st.dataframe(df_divs, use_container_width=True, hide_index=True)
     else:
         st.info("Nenhum recente.")
+
