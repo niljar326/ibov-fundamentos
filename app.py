@@ -159,11 +159,13 @@ def get_animated_ey_data_dynamic(ticker_list):
                 
                 if price_at_date > 0:
                     ey_val = (eps_val / price_at_date) * 100
-                    raw_data.append({
-                        'Ativo': t,
-                        'Data_Real': date_clean,
-                        'EY': ey_val
-                    })
+                    # Filtro de Sanidade: Remove erros de dados > 500%
+                    if ey_val < 500:
+                        raw_data.append({
+                            'Ativo': t,
+                            'Data_Real': date_clean,
+                            'EY': ey_val
+                        })
         except: continue
 
     if not raw_data: return pd.DataFrame()
@@ -188,22 +190,15 @@ def get_animated_ey_data_dynamic(ticker_list):
     )
 
     # 4. LÓGICA DE CORTE: TOP 10 POR TRIMESTRE
-    # Aqui é onde a mágica acontece: Para cada trimestre, pegamos só os top 10 DAQUELE MOMENTO.
     frames_list = []
     unique_quarters = sorted(df_merged['Trimestre'].unique())
 
     for q in unique_quarters:
-        # Pega dados daquele trimestre
         df_q = df_merged[df_merged['Trimestre'] == q].copy()
-        
-        # Ordena e pega Top 10
         df_q_top = df_q.sort_values(by='EY', ascending=False).head(10)
-        
         frames_list.append(df_q_top)
 
-    # Reconstrói o DataFrame final apenas com os vencedores de cada rodada
     df_final = pd.concat(frames_list)
-    
     return df_final.sort_values(by=['Data_Real', 'EY'], ascending=[True, True])
 
 # --- Lógica do Gráfico de Linha (Individual) ---
@@ -305,76 +300,4 @@ st.divider()
 st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
 if not df_warning.empty:
     def color_red(v): return 'color: red; font-weight: bold;' if isinstance(v, str) and '-' in v else ''
-    st.dataframe(df_warning.style.map(color_red, subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "Alavancagem (Dív/Patr)": "{:.2f}"}), use_container_width=True, hide_index=True)
-else: st.info("Nenhuma ação crítica encontrada.")
-
-# 3. GRÁFICO ANIMADO DINÂMICO
-st.divider()
-st.subheader("📺 Corrida de Rentabilidade (Earnings Yield)")
-st.markdown("Visualização dinâmica: As ações **entram e saem do Top 10** a cada trimestre conforme seu desempenho histórico.")
-
-if not df_best.empty:
-    # Aumentamos o pool de busca para Top 30 para permitir rotatividade no gráfico
-    with st.spinner("Analisando histórico de 30 empresas para montar a corrida (pode levar 20s)..."):
-        top_30_tickers = df_best['Ativo'].head(30).tolist()
-        df_anim = get_animated_ey_data_dynamic(top_30_tickers)
-
-    if not df_anim.empty:
-        max_ey = df_anim['EY'].max()
-        range_x_fixed = [0, max_ey * 1.1]
-
-        fig_anim = px.bar(
-            df_anim, 
-            x="EY", 
-            y="Ativo", 
-            animation_frame="Trimestre", 
-            orientation='h',
-            text="EY",
-            range_x=range_x_fixed,
-            color="Ativo",
-            title="Top 10 Earnings Yield (%) por Trimestre"
-        )
-        
-        fig_anim.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-        fig_anim.update_layout(
-            xaxis_title="Earnings Yield (LPA/Preço) %",
-            yaxis_title="",
-            showlegend=False,
-            height=600, # Aumentei um pouco altura
-            yaxis={'categoryorder':'total ascending'} # Isso ajuda a ordenar visualmente
-        )
-        
-        st.plotly_chart(fig_anim, use_container_width=True)
-        st.caption("*Nota: O gráfico seleciona dinamicamente as 10 melhores daquele trimestre dentre as Top 30 atuais.*")
-    else:
-        st.warning("Dados históricos insuficientes para gerar a animação agora.")
-
-# 4. Gráfico Individual
-st.divider()
-st.subheader("📈 Análise Detalhada: Cotação vs Lucro")
-options = df_best['Ativo'].tolist()
-idx_def = options.index('LREN3') if 'LREN3' in options else 0
-with st.expander("🔎 Selecionar Ação", expanded=st.session_state.expander_open):
-    sel = st.selectbox("Ativo:", options, index=idx_def, on_change=close_expander)
-
-if sel:
-    with st.spinner(f'Gerando gráfico para {sel}...'):
-        df_c = get_chart_data(sel)
-    if df_c is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=df_c['Periodo'], y=df_c['Receita'], name="Receita", marker=dict(color='#A9A9A9'), text=df_c['Receita_Texto'], textposition='outside', yaxis='y1'))
-        fig.add_trace(go.Scatter(x=df_c['Periodo'], y=df_c['Lucro'], name="Lucro", mode='lines+markers', line=dict(color='green', width=3), yaxis='y2'))
-        fig.add_trace(go.Scatter(x=df_c['Periodo'], y=df_c['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='blue', width=3), yaxis='y3'))
-        fig.update_layout(title=f"{sel}: Receita vs Lucro vs Preço", xaxis=dict(title="Período"), yaxis=dict(title="Receita", showgrid=False), yaxis2=dict(title="Lucro", overlaying="y", side="right", showgrid=False), yaxis3=dict(title="Cotação", overlaying="y", side="right", position=0.95, showgrid=False), legend=dict(orientation="h", y=1.1))
-        st.plotly_chart(fig, use_container_width=True)
-    else: st.warning("Sem dados.")
-
-# 5. Notícias/Divs
-st.divider()
-c1, c2 = st.columns(2)
-with c1:
-    st.subheader("📰 Notícias (Brasília)")
-    for n in get_market_news(): st.markdown(f"**[{n['title']}]({n['link']})**\n*{n['source']} - {n['date_str']}*")
-with c2:
-    st.subheader("💰 Dividendos Recentes")
-    st.dataframe(get_latest_dividends(df_best['Ativo'].tolist()), hide_index=True)
+    st.dataframe(df_warning.style.map(color_red, subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "A
