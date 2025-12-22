@@ -10,24 +10,18 @@ st.set_page_config(
 # --- 2. CONFIGURAÇÃO ADSENSE (METATAG) ---
 import streamlit.components.v1 as components
 
-def inject_adsense_meta_tag(client_id):
-    # Injeta a meta tag no <head> da página pai (fora do iframe do Streamlit)
-    meta_tag_code = f"""
-    <script>
-        var meta = window.parent.document.createElement('meta');
-        meta.name = "google-adsense-account";
-        meta.content = "{client_id}";
-        window.parent.document.getElementsByTagName('head')[0].appendChild(meta);
-        console.log("AdSense Meta Tag Injected: " + "{client_id}");
-    </script>
+def inject_adsense_script(client_id):
+    # Código Javascript que força a entrada do script no <head>
+    adsense_script = f"""
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client_id}"
+     crossorigin="anonymous"></script>
     """
-    components.html(meta_tag_code, height=0)
+    # Injeta
+    components.html(adsense_script, height=0)
 
-# !!! SUBSTITUA PELO SEU ID DE PUBLICADOR (EX: ca-pub-1234567890123456) !!!
+# Coloque seu ID aqui
 ADSENSE_ID = "ca-pub-3077044556128491" 
-
-# Executa a injeção
-inject_adsense_meta_tag(ADSENSE_ID)
+inject_adsense_script(ADSENSE_ID)
 
 
 # --- IMPORTS GERAIS ---
@@ -471,5 +465,6 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
+
 
 
