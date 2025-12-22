@@ -22,7 +22,7 @@ st.markdown("""
     [data-testid="stDataFrame"] table tr th {
         text-align: right !important;
     }
-    /* Células alinhadas à esquerda/centro visual */
+    /* Células alinhadas à esquerda */
     [data-testid="stDataFrame"] table tr td {
         text-align: left !important;
     }
@@ -85,7 +85,6 @@ def get_ranking_data():
 def apply_filters(df):
     if df.empty: return df
     
-    # Filtros
     filtro = (
         (df['roe'] > 0.05) & 
         (df['pl'] < 15) & (df['pl'] > 0) & 
@@ -106,10 +105,8 @@ def apply_filters(df):
         'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'
     }, inplace=True)
     
-    # Ordenação: Menor P/L e Maior Margem Líquida
+    # Ordenação padrão
     df_final = df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False])
-    
-    # Reseta o index para garantir que a zebra (cores alternadas) funcione corretamente
     return df_final.reset_index(drop=True)
 
 # --- Lógica do Gráfico ---
@@ -174,13 +171,11 @@ def get_chart_data(ticker):
         ttm_rev = 0
         ttm_inc = 0
         has_ttm = False
-
         if not quarterly.empty:
             q_limit = min(4, len(quarterly))
             last_q = quarterly.tail(q_limit)
             q_rev_col = find_col(quarterly, rev_candidates)
             q_inc_col = find_col(quarterly, inc_candidates)
-
             if q_rev_col and q_inc_col:
                 ttm_rev = last_q[q_rev_col].sum()
                 ttm_inc = last_q[q_inc_col].sum()
@@ -200,9 +195,7 @@ def get_chart_data(ticker):
         df_final = pd.DataFrame(data_rows)
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
         return df_final
-    except Exception as e:
-        print(f"Erro Chart {ticker}: {e}")
-        return None
+    except: return None
 
 # --- Dividendos ---
 @st.cache_data(ttl=3600*6)
@@ -222,7 +215,7 @@ def get_latest_dividends(ticker_list):
         return df.sort_values('Data', ascending=False).head(5)
     return pd.DataFrame()
 
-# --- Notícias (AJUSTADO PARA HORÁRIO BRASÍLIA) ---
+# --- Notícias (Horário Brasília UTC-3) ---
 @st.cache_data(ttl=1800)
 def get_market_news():
     feeds = {
@@ -236,12 +229,9 @@ def get_market_news():
             feed = feedparser.parse(url)
             for entry in feed.entries[:3]:
                 try:
-                    # Converte o struct_time para datetime (assumindo UTC que vem do RSS)
                     dt_utc = datetime.datetime.fromtimestamp(mktime(entry.published_parsed))
-                    # Subtrai 3 horas para chegar no horário de Brasília
-                    dt_br = dt_utc - timedelta(hours=3)
+                    dt_br = dt_utc - timedelta(hours=3) # Ajuste UTC-3
                     date_str = dt_br.strftime("%d/%m %H:%M")
-                    # Objeto para ordenação
                     dt_obj = dt_br
                 except:
                     dt_obj = datetime.datetime.now()
@@ -257,14 +247,6 @@ def get_market_news():
         except: continue
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
-
-# --- Função de Estilo Zebrado ---
-def highlight_even_rows(row):
-    # Se o índice da linha for par, pinta de cinza claro
-    if row.name % 2 == 0:
-        return ['background-color: #f2f2f2'] * len(row)
-    else:
-        return [''] * len(row)
 
 # --- Interface Principal ---
 st.title("📊 Análise Fundamentalista: Resultados")
@@ -283,9 +265,15 @@ if not df_ranking.empty:
     
     cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
     
-    # Aplica o estilo Zebrado
-    # O .format() aqui garante que o visual numérico fique correto mesmo com o styler
-    styled_df = df_ranking[cols_view].style.apply(highlight_even_rows, axis=1).format({
+    # Lógica para Colorir Colunas Pares (2ª, 4ª, 6ª...)
+    # Visualmente: Preço(2), P/L(4), DY(6)
+    even_cols_subset = ['Preço', 'P/L', 'DY']
+    
+    # Aplicando estilo: Cinza Claro (#f2f2f2) e Forçando texto Preto (para funcionar no Dark Mode)
+    styler = df_ranking[cols_view].style.map(
+        lambda x: 'background-color: #f2f2f2; color: black;', 
+        subset=even_cols_subset
+    ).format({
         "Preço": "R$ {:.2f}",
         "EV/EBIT": "{:.2f}",
         "P/L": "{:.2f}",
@@ -294,7 +282,7 @@ if not df_ranking.empty:
         "Margem Líq.": "{:.2f}"
     })
 
-    # Configuração de Colunas (para alinhamento e tipo)
+    # Configuração adicional do Streamlit
     column_configuration = {
         "Preço": st.column_config.NumberColumn(format="R$ %.2f"),
         "EV/EBIT": st.column_config.NumberColumn(format="%.2f"),
@@ -305,7 +293,7 @@ if not df_ranking.empty:
     }
 
     st.dataframe(
-        styled_df, 
+        styler, 
         use_container_width=True,
         column_config=column_configuration,
         hide_index=True
