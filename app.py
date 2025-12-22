@@ -8,12 +8,9 @@ import datetime
 from datetime import timedelta
 from time import mktime
 
-st.markdown("# 🇧🇷 Screener Fundamentalista: As Ações Mais Baratas do Brasil")
-st.markdown("### Ranking atualizado de ações com menor P/L, maiores Dividendos e alta eficiência (ROE).")
-
-# --- Configuração da Página ---
+# --- 1. Configuração da Página (SEO OTIMIZADO) ---
 st.set_page_config(
-    age_title="Ranking de Ações Ibovespa 2025 - Análise Fundamentalista e Dividendos",
+    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
     layout="wide",
     page_icon="🇧🇷"
 )
@@ -252,29 +249,22 @@ def get_market_news():
     return news_items[:6]
 
 # --- Interface Principal ---
-st.title("📊 Análise Fundamentalista: Resultados")
+# SEO: Título H1 visível e texto descritivo
+st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
+
+st.markdown("""
+<div style="text-align: justify; margin-bottom: 20px;">
+Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades da bolsa de valores brasileira. 
+O algoritmo busca ações com <b>Preço justo (P/L baixo)</b>, <b>Altos Dividendos (Dividend Yield)</b> e <b>Alta Rentabilidade (ROE)</b>.
+</div>
+""", unsafe_allow_html=True)
 
 # 1. Carregamento
 with st.spinner('Processando dados...'):
     df_raw = get_ranking_data()
     df_ranking = apply_filters(df_raw)
-
-ith st.expander("ℹ️ Sobre a Metodologia (SEO)", expanded=False):
-    st.markdown("""
-    **Como encontrar as melhores ações da Bolsa Brasileira (B3)?**
-    
-    Esta ferramenta realiza uma **análise fundamentalista automática** das ações listadas no Ibovespa e Small Caps. 
-    Utilizamos filtros rigorosos para identificar empresas descontadas e rentáveis:
-    
-    *   **P/L (Preço sobre Lucro):** Buscamos ações baratas com P/L baixo (menor que 15).
-    *   **ROE (Retorno sobre o Patrimônio):** Apenas empresas eficientes com ROE acima de 5%.
-    *   **Dividend Yield (DY):** Foco em renda passiva com dividendos acima de 4% ao ano.
-    *   **Margem Líquida:** Empresas que transformam receita em lucro real.
-    
-    Os dados são atualizados em tempo real via Yahoo Finance e Fundamentus, focando em ativos como VALE3, PETR4, WEGE3, BBAS3, ITUB4, LREN3, entre outros.
-    """)
 
 # 2. Tabela Principal
 if not df_ranking.empty:
@@ -283,11 +273,11 @@ if not df_ranking.empty:
     
     cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
     
-    # Lógica para Colorir Colunas Pares (2ª, 4ª, 6ª...)
-    # Visualmente: Preço(2), P/L(4), DY(6)
+    # Lógica para Colorir Colunas Pares (Visualmente: 2ª, 4ª, 6ª)
+    # Colunas: Ativo(1), Preço(2), EV/EBIT(3), P/L(4), ROE(5), DY(6), Margem(7)
     even_cols_subset = ['Preço', 'P/L', 'DY']
     
-    # Aplicando estilo: Cinza Claro (#f2f2f2) e Forçando texto Preto (para funcionar no Dark Mode)
+    # Aplicando estilo: Cinza Claro (#f2f2f2) nas colunas pares
     styler = df_ranking[cols_view].style.map(
         lambda x: 'background-color: #f2f2f2; color: black;', 
         subset=even_cols_subset
@@ -300,7 +290,6 @@ if not df_ranking.empty:
         "Margem Líq.": "{:.2f}"
     })
 
-    # Configuração adicional do Streamlit
     column_configuration = {
         "Preço": st.column_config.NumberColumn(format="R$ %.2f"),
         "EV/EBIT": st.column_config.NumberColumn(format="%.2f"),
@@ -316,6 +305,21 @@ if not df_ranking.empty:
         column_config=column_configuration,
         hide_index=True
     )
+
+    # SEO: Explicação da Metodologia
+    with st.expander("ℹ️ Sobre a Metodologia (SEO)", expanded=False):
+        st.markdown("""
+        **Como encontrar as melhores ações da Bolsa Brasileira (B3)?**
+        
+        Esta ferramenta realiza uma **análise fundamentalista automática** das ações listadas no Ibovespa e Small Caps. 
+        Utilizamos filtros rigorosos para identificar empresas descontadas e rentáveis:
+        
+        *   **P/L (Preço sobre Lucro):** Buscamos ações baratas com P/L baixo (menor que 15).
+        *   **ROE (Retorno sobre o Patrimônio):** Apenas empresas eficientes com ROE acima de 5%.
+        *   **Dividend Yield (DY):** Foco em renda passiva com dividendos acima de 4% ao ano.
+        
+        Os dados são atualizados em tempo real via Yahoo Finance e Fundamentus.
+        """)
 
     st.divider()
 
@@ -410,4 +414,3 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
-
