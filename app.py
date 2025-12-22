@@ -146,13 +146,6 @@ def get_ranking_data():
         return df
     except: return pd.DataFrame()
 
-from flask import send_from_directory
-
-@app.route('/ads.txt')
-def static_from_root():
-    return send_from_directory(app.static_folder, 'ads.txt')
-```[[1](https://www.google.com/url?sa=E&q=https%3A%2F%2Fvertexaisearch.cloud.google.com%2Fgrounding-api-redirect%2FAUZIYQFTm3ihcqtNkypLIrycICKLYGWTiIh7Ac495mhSBROxAIUnGDXWa3n6TI4RayXmPTh5ijqE-GjKfEWEB0elvxq06AgEphB8NqBsJCcqMZucLUQ2K-Q1pQM3-Q73NSguoAzhd6HtLqo%3D)]
-
 # Filtros da Tabela "Melhores"
 def apply_best_filters(df):
     if df.empty: return df
@@ -457,4 +450,5 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
+
 
