@@ -7,6 +7,9 @@ import yfinance as yf
 import datetime
 from datetime import timedelta
 from time import mktime
+import json
+import os
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 # --- 1. Configuração da Página (SEO) ---
 st.set_page_config(
@@ -24,6 +27,54 @@ st.markdown("""
     [data-testid="stDataFrame"] table tr td { text-align: left !important; }
     </style>
 """, unsafe_allow_html=True)
+
+# --- FUNÇÃO DO CONTADOR DE VISITANTES ---
+def update_visitor_counter():
+    file_path = "visitor_counter.json"
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    # Tenta obter o ID único da sessão do usuário (browser tab)
+    try:
+        ctx = get_script_run_ctx()
+        session_id = ctx.session_id
+    except:
+        session_id = "unknown"
+
+    # Estrutura padrão
+    data = {"total_visits": 0, "daily_visits": {}}
+
+    # Carrega dados existentes se o arquivo existir
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+        except:
+            pass # Se der erro, usa a estrutura padrão
+
+    # Garante que existe uma chave para o dia de hoje
+    if today not in data["daily_visits"]:
+        data["daily_visits"][today] = []
+
+    # LÓGICA: Só conta se este Session ID ainda não acessou HOJE
+    # Isso evita contar F5 (refresh) como nova visita
+    if session_id not in data["daily_visits"][today]:
+        data["daily_visits"][today].append(session_id) # Registra o visitante hoje
+        data["total_visits"] += 1 # Incrementa o total global
+        
+        # Salva no arquivo
+        with open(file_path, "w") as f:
+            json.dump(data, f)
+            
+    return data["total_visits"]
+
+# --- Executa o Contador e Mostra na Sidebar ---
+total_visitantes = update_visitor_counter()
+
+with st.sidebar:
+    st.header("📊 Estatísticas")
+    st.metric(label="Visitantes Únicos", value=total_visitantes, help="Contagem de dispositivos únicos (não conta refresh)")
+    st.divider()
+    st.caption("Desenvolvido com Streamlit")
 
 # --- Estado ---
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
@@ -102,11 +153,9 @@ def get_risk_table(df_original):
     if df_original.empty: return pd.DataFrame()
     
     # Lista Manual de Recuperação Judicial ou Risco Conhecido (Bolsa BR)
-    # Nota: Fundamentus não tem flag de RJ, precisamos listar as conhecidas.
     lista_rj = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4', 'RCSL3', 'RCSL4', 'RSID3', 'TCNO3', 'TCNO4']
     
     # Filtro: Dívida Alta (divbpatr > 3) OU está na lista de RJ
-    # divbpatr é Dívida Bruta / Patrimônio Líquido (proxy para alavancagem alta)
     mask_risk = (df_original['divbpatr'] > 3.0) | (df_original['papel'].isin(lista_rj))
     df_risk = df_original[mask_risk].copy()
     
@@ -143,13 +192,10 @@ def get_risk_table(df_original):
                     curr_profit = inc_row.iloc[0] # Mais recente
                     prev_profit = inc_row.iloc[1] # Ano anterior
                     
-                    # Se o lucro caiu (atual menor que anterior)
                     if curr_profit < prev_profit:
-                        # Calcula % de queda
-                        # Se o anterior era negativo, a matemática de % fica estranha, tratamos com abs
                         diff = (curr_profit - prev_profit)
                         pct = (diff / abs(prev_profit)) * 100
-                        val_queda = pct # Será negativo
+                        val_queda = pct 
                         lucro_queda_str = f"{pct:.1f}%"
                     else:
                         lucro_queda_str = "Subiu/Estável"
@@ -158,7 +204,6 @@ def get_risk_table(df_original):
         except:
             lucro_queda_str = "Erro dados"
 
-        # Só adiciona se tiver queda de lucro OU for RJ
         if val_queda < 0 or ticker in lista_rj:
             risk_data.append({
                 'Ativo': ticker,
@@ -297,7 +342,7 @@ Abaixo, você também encontra uma lista de <b>Alerta</b> para empresas em situa
 with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
-    df_warning = get_risk_table(df_raw) # Gera tabela de risco
+    df_warning = get_risk_table(df_raw)
 
 # 2. TABELA 1: MELHORES AÇÕES
 if not df_best.empty:
@@ -306,7 +351,6 @@ if not df_best.empty:
     
     cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
     
-    # Zebrado nas colunas pares (Cinza Claro)
     even_cols_subset = ['Preço', 'P/L', 'DY']
     styler = df_best[cols_view].style.map(
         lambda x: 'background-color: #f2f2f2; color: black;', 
@@ -323,29 +367,23 @@ if not df_best.empty:
         hide_index=True
     )
 
-# 3. TABELA 2: ATENÇÃO (NOVA)
+# 3. TABELA 2: ATENÇÃO
 st.divider()
 st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
 st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
 
 if not df_warning.empty:
-    # Colore a porcentagem de queda de vermelho
     def color_negative_red(val):
         if isinstance(val, str) and '-' in val:
             return 'color: red; font-weight: bold;'
         return ''
 
-    # Configuração visual
     styler_risk = df_warning.style.map(color_negative_red, subset=['Queda Lucro (Ano)']).format({
         "Preço": "R$ {:.2f}",
         "Alavancagem (Dív/Patr)": "{:.2f}"
     })
     
-    st.dataframe(
-        styler_risk,
-        use_container_width=True,
-        hide_index=True
-    )
+    st.dataframe(styler_risk, use_container_width=True, hide_index=True)
 else:
     st.info("Nenhuma ação com os critérios de risco (Dívida Extrema + Queda Lucro) encontrada hoje.")
 
@@ -403,4 +441,3 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
-
