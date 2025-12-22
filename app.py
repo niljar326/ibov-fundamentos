@@ -373,3 +373,39 @@ if not df_best.empty:
             yaxis_title="",
             showlegend=False,
             height=600,
+            yaxis={'categoryorder':'total ascending'} 
+        )
+        
+        st.plotly_chart(fig_anim, use_container_width=True)
+    else:
+        st.warning("Dados históricos insuficientes para gerar a animação agora.")
+
+# 4. Gráfico Individual (ÚLTIMOS 4 ANOS + TTM)
+st.divider()
+st.subheader("📈 Análise Detalhada: Cotação vs Lucro (Últimos 4 Anos)")
+options = df_best['Ativo'].tolist()
+idx_def = options.index('LREN3') if 'LREN3' in options else 0
+with st.expander("🔎 Selecionar Ação", expanded=st.session_state.expander_open):
+    sel = st.selectbox("Ativo:", options, index=idx_def, on_change=close_expander)
+
+if sel:
+    with st.spinner(f'Gerando gráfico para {sel}...'):
+        df_c = get_chart_data(sel)
+    if df_c is not None:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=df_c['Periodo'], y=df_c['Receita'], name="Receita", marker=dict(color='#A9A9A9'), text=df_c['Receita_Texto'], textposition='outside', yaxis='y1'))
+        fig.add_trace(go.Scatter(x=df_c['Periodo'], y=df_c['Lucro'], name="Lucro", mode='lines+markers', line=dict(color='green', width=3), yaxis='y2'))
+        fig.add_trace(go.Scatter(x=df_c['Periodo'], y=df_c['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='blue', width=3), yaxis='y3'))
+        fig.update_layout(title=f"{sel}: Receita vs Lucro vs Preço", xaxis=dict(title="Período"), yaxis=dict(title="Receita", showgrid=False), yaxis2=dict(title="Lucro", overlaying="y", side="right", showgrid=False), yaxis3=dict(title="Cotação", overlaying="y", side="right", position=0.95, showgrid=False), legend=dict(orientation="h", y=1.1))
+        st.plotly_chart(fig, use_container_width=True)
+    else: st.warning("Sem dados.")
+
+# 5. Notícias/Divs
+st.divider()
+c1, c2 = st.columns(2)
+with c1:
+    st.subheader("📰 Notícias (Brasília)")
+    for n in get_market_news(): st.markdown(f"**[{n['title']}]({n['link']})**\n*{n['source']} - {n['date_str']}*")
+with c2:
+    st.subheader("💰 Dividendos Recentes")
+    st.dataframe(get_latest_dividends(df_best['Ativo'].tolist()), hide_index=True)
