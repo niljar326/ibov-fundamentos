@@ -1,5 +1,3 @@
-import streamlit as st
-import pandas as pd
 import fundamentus
 import plotly.graph_objects as go
 import feedparser
@@ -9,7 +7,7 @@ from datetime import timedelta
 from time import mktime
 import json
 import os
-from streamlit.runtime.scriptrunner import get_script_run_ctx
+import uuid  # Biblioteca para gerar IDs únicos
 
 # --- 1. Configuração da Página (SEO) ---
 st.set_page_config(
@@ -28,40 +26,48 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÃO DO CONTADOR DE VISITANTES ---
+# --- FUNÇÃO DO CONTADOR DE VISITANTES (ANTI-REFRESH) ---
 def update_visitor_counter():
     file_path = "visitor_counter.json"
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    # Tenta obter o ID único da sessão do usuário (browser tab)
+    # 1. Gerenciamento de ID via URL (Query Params)
+    # Tenta pegar o ID existente na URL
+    # Nota: Em versões recentes do Streamlit, usa-se st.query_params como dicionário
     try:
-        ctx = get_script_run_ctx()
-        session_id = ctx.session_id
+        current_params = st.query_params
+        visitor_id = current_params.get("visitor_id", None)
     except:
-        session_id = "unknown"
+        # Fallback para versões muito antigas (apenas segurança)
+        visitor_id = None
 
-    # Estrutura padrão
+    # Se não tem ID na URL, gera um novo e coloca lá
+    if not visitor_id:
+        visitor_id = str(uuid.uuid4())
+        st.query_params["visitor_id"] = visitor_id
+    
+    # 2. Gerenciamento do Arquivo JSON
     data = {"total_visits": 0, "daily_visits": {}}
 
-    # Carrega dados existentes se o arquivo existir
+    # Carrega dados se o arquivo existir
     if os.path.exists(file_path):
         try:
             with open(file_path, "r") as f:
                 data = json.load(f)
         except:
-            pass # Se der erro, usa a estrutura padrão
+            pass # Se o arquivo estiver corrompido, inicia zerado
 
-    # Garante que existe uma chave para o dia de hoje
+    # Garante a chave do dia de hoje
     if today not in data["daily_visits"]:
         data["daily_visits"][today] = []
 
-    # LÓGICA: Só conta se este Session ID ainda não acessou HOJE
-    # Isso evita contar F5 (refresh) como nova visita
-    if session_id not in data["daily_visits"][today]:
-        data["daily_visits"][today].append(session_id) # Registra o visitante hoje
-        data["total_visits"] += 1 # Incrementa o total global
+    # 3. Lógica de Contagem
+    # Só conta se este visitor_id (preso na URL) NÃO estiver na lista de hoje
+    if visitor_id not in data["daily_visits"][today]:
+        data["daily_visits"][today].append(visitor_id) # Registra ID
+        data["total_visits"] += 1 # Soma +1 no total
         
-        # Salva no arquivo
+        # Salva no disco
         with open(file_path, "w") as f:
             json.dump(data, f)
             
@@ -72,7 +78,7 @@ total_visitantes = update_visitor_counter()
 
 with st.sidebar:
     st.header("📊 Estatísticas")
-    st.metric(label="Visitantes Únicos", value=total_visitantes, help="Contagem de dispositivos únicos (não conta refresh)")
+    st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos contabilizados via ID de sessão.")
     st.divider()
     st.caption("Desenvolvido com Streamlit")
 
