@@ -343,7 +343,7 @@ if not df_best.empty:
         )
         
         st.plotly_chart(fig_anim, use_container_width=True)
-        st.caption("*Nota: Trimestres sem dados oficiais são preenchidos com o último valor válido (Forward Fill) para manter a continuidade.*")
+        st.caption("*Nota: Trimestres sem dados oficiais são preenchidos com o último valor válido (Forward Fill) para manter a continuidade visual.*")
     else:
         st.warning("Dados históricos insuficientes para gerar a animação agora.")
 
