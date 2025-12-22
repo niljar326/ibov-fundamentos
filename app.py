@@ -1,4 +1,15 @@
-import fundamentus
+import streamlit as st
+
+# --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
+# Movemos para cá para evitar conflitos com imports que geram avisos
+st.set_page_config(
+    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
+    layout="wide",
+    page_icon="🇧🇷"
+)
+
+# --- IMPORTS (DEPOIS DA CONFIG) ---
+import pandas as pd
 import plotly.graph_objects as go
 import feedparser
 import yfinance as yf
@@ -7,14 +18,14 @@ from datetime import timedelta
 from time import mktime
 import json
 import os
-import uuid  # Biblioteca para gerar IDs únicos
+import uuid
 
-# --- 1. Configuração da Página (SEO) ---
-st.set_page_config(
-    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
-    layout="wide",
-    page_icon="🇧🇷"
-)
+# Tenta importar fundamentus (tratamento de erro caso falhe na nuvem)
+try:
+    import fundamentus
+except ImportError:
+    st.error("Biblioteca 'fundamentus' não encontrada. Adicione ao requirements.txt")
+    st.stop()
 
 # --- CSS Global ---
 st.markdown("""
@@ -32,53 +43,58 @@ def update_visitor_counter():
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     
     # 1. Gerenciamento de ID via URL (Query Params)
-    # Tenta pegar o ID existente na URL
-    # Nota: Em versões recentes do Streamlit, usa-se st.query_params como dicionário
+    # Compatibilidade com versões novas e antigas do Streamlit
     try:
-        current_params = st.query_params
-        visitor_id = current_params.get("visitor_id", None)
+        # Tenta pegar query params (versão nova)
+        if hasattr(st, "query_params"):
+            current_params = st.query_params
+            visitor_id = current_params.get("visitor_id", None)
+        else:
+            # Versão antiga (fallback)
+            current_params = st.experimental_get_query_params()
+            visitor_id = current_params.get("visitor_id", [None])[0]
     except:
-        # Fallback para versões muito antigas (apenas segurança)
         visitor_id = None
 
-    # Se não tem ID na URL, gera um novo e coloca lá
+    # Se não tem ID, gera um novo
     if not visitor_id:
         visitor_id = str(uuid.uuid4())
-        st.query_params["visitor_id"] = visitor_id
-    
+        # Salva na URL para persistir no F5
+        if hasattr(st, "query_params"):
+            st.query_params["visitor_id"] = visitor_id
+        
     # 2. Gerenciamento do Arquivo JSON
     data = {"total_visits": 0, "daily_visits": {}}
 
-    # Carrega dados se o arquivo existir
     if os.path.exists(file_path):
         try:
             with open(file_path, "r") as f:
                 data = json.load(f)
         except:
-            pass # Se o arquivo estiver corrompido, inicia zerado
+            pass 
 
-    # Garante a chave do dia de hoje
     if today not in data["daily_visits"]:
         data["daily_visits"][today] = []
 
-    # 3. Lógica de Contagem
-    # Só conta se este visitor_id (preso na URL) NÃO estiver na lista de hoje
+    # 3. Contagem
     if visitor_id not in data["daily_visits"][today]:
-        data["daily_visits"][today].append(visitor_id) # Registra ID
-        data["total_visits"] += 1 # Soma +1 no total
+        data["daily_visits"][today].append(visitor_id)
+        data["total_visits"] += 1
         
-        # Salva no disco
         with open(file_path, "w") as f:
             json.dump(data, f)
             
     return data["total_visits"]
 
-# --- Executa o Contador e Mostra na Sidebar ---
-total_visitantes = update_visitor_counter()
+# --- Executa o Contador ---
+try:
+    total_visitantes = update_visitor_counter()
+except Exception as e:
+    total_visitantes = 0 # Fallback silencioso em caso de erro no contador
 
 with st.sidebar:
     st.header("📊 Estatísticas")
-    st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos contabilizados via ID de sessão.")
+    st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos (não conta F5)")
     st.divider()
     st.caption("Desenvolvido com Streamlit")
 
@@ -120,7 +136,6 @@ def get_ranking_data():
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
         
-        # Adicionamos 'divbpatr' (Dívida) e 'c5y' (Crescimento Receita)
         cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y']
         
         for col in cols:
@@ -141,7 +156,6 @@ def apply_best_filters(df):
     )
     df_filtered = df[filtro].copy()
     
-    # Ajustes %
     df_filtered['dy'] = df_filtered['dy'] * 100
     df_filtered['mrgliq'] = df_filtered['mrgliq'] * 100
     df_filtered['roe'] = df_filtered['roe'] * 100
@@ -153,40 +167,30 @@ def apply_best_filters(df):
     
     return df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False]).reset_index(drop=True)
 
-# --- LÓGICA DA TABELA DE RISCO ("ATENÇÃO") ---
+# --- LÓGICA DA TABELA DE RISCO ---
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
     if df_original.empty: return pd.DataFrame()
     
-    # Lista Manual de Recuperação Judicial ou Risco Conhecido (Bolsa BR)
     lista_rj = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4', 'RCSL3', 'RCSL4', 'RSID3', 'TCNO3', 'TCNO4']
-    
-    # Filtro: Dívida Alta (divbpatr > 3) OU está na lista de RJ
     mask_risk = (df_original['divbpatr'] > 3.0) | (df_original['papel'].isin(lista_rj))
     df_risk = df_original[mask_risk].copy()
     
     if df_risk.empty: return pd.DataFrame()
 
-    # Vamos calcular a queda de lucro usando YFinance para essas ações
     risk_data = []
-    
-    # Limita a 15 para não travar o app buscando dados
     top_risks = df_risk.sort_values(by='divbpatr', ascending=False).head(15)
     
     for idx, row in top_risks.iterrows():
         ticker = row['papel']
         status = "Recup. Judicial / Reestruturação" if ticker in lista_rj else "Alta Alavancagem"
-        
         lucro_queda_str = "N/D"
         val_queda = 0.0
         
         try:
-            # Tenta pegar dados do Yahoo Finance
             stock = yf.Ticker(ticker + ".SA")
             fin = stock.financials
-            # Tenta pegar Net Income (Lucro Líquido)
             if not fin.empty:
-                # Procura linha de lucro
                 inc_row = None
                 possible_names = ['Net Income', 'Net Income Common', 'Net Income Continuous']
                 for name in possible_names:
@@ -195,9 +199,8 @@ def get_risk_table(df_original):
                         break
                 
                 if inc_row is not None and len(inc_row) >= 2:
-                    curr_profit = inc_row.iloc[0] # Mais recente
-                    prev_profit = inc_row.iloc[1] # Ano anterior
-                    
+                    curr_profit = inc_row.iloc[0]
+                    prev_profit = inc_row.iloc[1]
                     if curr_profit < prev_profit:
                         diff = (curr_profit - prev_profit)
                         pct = (diff / abs(prev_profit)) * 100
