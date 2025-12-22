@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 import fundamentus
 import plotly.graph_objects as go
-from GoogleNews import GoogleNews
+import feedparser  # BIBLIOTECA PARA LER RSS (NOTÍCIAS REAIS)
 import yfinance as yf
 import datetime
+from time import mktime
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Blog Ibovespa - Fundamentalista, ev/ebitda, ROE, melhores ações",
+    page_title="Blog Ibovespa - Fundamentalista",
     layout="wide",
     page_icon="🇧🇷"
 )
@@ -174,7 +175,8 @@ def get_chart_data(ticker):
 @st.cache_data(ttl=3600*6)
 def get_latest_dividends(ticker_list):
     divs_data = []
-    for ticker in ticker_list[:15]:
+    # Limita a busca para evitar timeout, pegando os top 10 da lista
+    for ticker in ticker_list[:10]:
         try:
             stock = yf.Ticker(ticker + ".SA")
             d = stock.dividends
@@ -185,16 +187,48 @@ def get_latest_dividends(ticker_list):
     if divs_data:
         df = pd.DataFrame(divs_data)
         df['Data'] = pd.to_datetime(df['Data']).dt.tz_localize(None)
-        return df.sort_values('Data', ascending=False).head(3)
+        return df.sort_values('Data', ascending=False).head(5)
     return pd.DataFrame()
 
-# --- Notícias ---
-def get_news():
-    try:
-        gn = GoogleNews(lang='pt', region='BR')
-        gn.search("ações ibovespa dividendos destaques")
-        return gn.results()[:3]
-    except: return []
+# --- NOVA FUNÇÃO DE NOTÍCIAS (RSS FEED) ---
+@st.cache_data(ttl=1800) # Cache de 30 minutos
+def get_market_news():
+    # Feeds RSS oficiais das fontes solicitadas
+    feeds = {
+        'Money Times': 'https://www.moneytimes.com.br/feed/',
+        'InfoMoney': 'https://www.infomoney.com.br/feed/',
+        'E-Investidor': 'https://einvestidor.estadao.com.br/feed/'
+    }
+    
+    news_items = []
+    
+    for source, url in feeds.items():
+        try:
+            feed = feedparser.parse(url)
+            # Pega as 3 notícias mais recentes de cada fonte
+            for entry in feed.entries[:3]:
+                # Tenta converter a data de publicação
+                try:
+                    dt = datetime.datetime.fromtimestamp(mktime(entry.published_parsed))
+                    date_str = dt.strftime("%d/%m %H:%M")
+                except:
+                    date_str = "Recente"
+
+                news_items.append({
+                    'title': entry.title,
+                    'link': entry.link,
+                    'date_obj': dt if 'dt' in locals() else datetime.datetime.now(),
+                    'date_str': date_str,
+                    'source': source
+                })
+        except:
+            continue
+            
+    # Ordena todas as notícias por data (mais recente primeiro)
+    news_items.sort(key=lambda x: x['date_obj'], reverse=True)
+    
+    # Retorna as 6 mais recentes no total
+    return news_items[:6]
 
 # --- Interface ---
 st.title("📊 Análise Fundamentalista: Resultados")
@@ -230,7 +264,7 @@ if not df_ranking.empty:
 
     st.divider()
 
-    # 3. Gráfico Travado e Fixo
+    # 3. Gráfico
     st.subheader("📈 Evolução: Cotação vs Lucro vs Receita")
     
     options = df_ranking['Ativo'].tolist()
@@ -251,7 +285,7 @@ if not df_ranking.empty:
                 y=df_chart['Receita'],
                 name="Receita", 
                 marker=dict(
-                    color='#696969', # Cinza Escuro
+                    color='#696969',
                     line=dict(color='black', width=1.5) 
                 ),
                 text=df_chart['Receita_Texto'],
@@ -260,14 +294,14 @@ if not df_ranking.empty:
                 yaxis='y1' 
             ))
 
-            # EIXO Y2: LUCRO LÍQUIDO (AGORA VERMELHO)
+            # EIXO Y2: LUCRO
             fig.add_trace(go.Scatter(
                 x=df_chart['Periodo'], 
                 y=df_chart['Lucro'],
                 name="Lucro Líquido", 
                 mode='lines+markers',
-                line=dict(color='red', width=3, shape='spline', smoothing=1.3), # Cor Vermelha
-                marker=dict(size=9, color='red'), # Cor Vermelha
+                line=dict(color='#008000', width=3, shape='spline', smoothing=1.3),
+                marker=dict(size=9, color='#008000'),
                 yaxis='y2' 
             ))
 
@@ -284,65 +318,25 @@ if not df_ranking.empty:
 
             fig.update_layout(
                 title=f"{selected}: Correlação Visual (Proporcional)",
-                # Define tamanho fixo no Layout
-                height=500,
+                xaxis=dict(type='category', title="Período"),
                 
-                # Desabilita o "Arrastar" (Pan)
-                dragmode=False,
-                
-                xaxis=dict(
-                    type='category', 
-                    title="Período",
-                    fixedrange=True # TRAVA EIXO X (Sem Zoom)
-                ),
-                
-                # Eixo 1: Receita
                 yaxis=dict(
-                    title="Receita (R$)", 
-                    side="left", 
-                    showgrid=False, 
-                    title_font=dict(color="#696969"),
-                    fixedrange=True # TRAVA EIXO Y1
+                    title="Receita (R$)", side="left", showgrid=False, title_font=dict(color="#696969")
                 ),
-                
-                # Eixo 2: Lucro (Vermelho)
                 yaxis2=dict(
-                    title="Lucro Líquido (R$)", 
-                    side="right", 
-                    overlaying="y", 
-                    showgrid=False,
-                    title_font=dict(color="red"), # Texto Vermelho
-                    tickfont=dict(color="red"),   # Texto Vermelho
-                    fixedrange=True # TRAVA EIXO Y2
+                    title="Lucro Líquido (R$)", side="right", overlaying="y", showgrid=False,
+                    title_font=dict(color="green"), tickfont=dict(color="green")
                 ),
-                
-                # Eixo 3: Cotação
                 yaxis3=dict(
-                    title="Cotação (R$)", 
-                    side="right", 
-                    overlaying="y", 
-                    position=0.95, 
-                    showgrid=False, 
-                    showticklabels=False, 
-                    title_font=dict(color="blue"),
-                    fixedrange=True # TRAVA EIXO Y3
+                    title="Cotação (R$)", side="right", overlaying="y", position=0.95, 
+                    showgrid=False, showticklabels=False, title_font=dict(color="blue")
                 ),
-                
                 legend=dict(orientation="h", y=1.1, x=0),
                 hovermode="x unified",
                 barmode='overlay',
                 margin=dict(t=80)
             )
-            
-            # Configuração para desativar barra de ferramentas e zoom
-            config = {
-                'displayModeBar': False, # Remove botões do topo
-                'scrollZoom': False,     # Remove zoom com scroll do mouse
-                'showTips': False,
-                'doubleClick': False,
-            }
-            
-            st.plotly_chart(fig, use_container_width=True, config=config)
+            st.plotly_chart(fig, use_container_width=True)
             st.caption("Nota: 'Últimos 12m' representa o acumulado dos 4 últimos trimestres (TTM).")
         else:
             st.warning("Dados indisponíveis para este ativo.")
@@ -354,22 +348,36 @@ st.divider()
 
 # 4. Notícias e Dividendos
 c1, c2 = st.columns(2)
+
 with c1:
-    st.subheader("📰 Notícias")
-    news = get_news()
-    for n in news:
-        st.markdown(f"**[{n['title']}]({n['link']})**")
-        st.caption(f"{n['date']} - {n['media']}")
-        st.write("---")
+    st.subheader("📰 Notícias do Mercado")
+    try:
+        news = get_market_news()
+        if news:
+            for n in news:
+                # Layout de Notícia
+                st.markdown(f"""
+                <div style='padding: 10px; border-radius: 5px; background-color: #f0f2f6; margin-bottom: 10px;'>
+                    <a href='{n['link']}' target='_blank' style='text-decoration: none; color: #000; font-weight: bold;'>
+                        {n['title']}
+                    </a>
+                    <br>
+                    <span style='font-size: 0.8em; color: #555;'>
+                        {n['source']} • {n['date_str']}
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("Nenhuma notícia encontrada no momento.")
+    except Exception as e:
+        st.error(f"Erro ao carregar notícias: {e}")
 
 with c2:
-    st.subheader("💰 Dividendos Recentes")
+    st.subheader("💰 Dividendos Recentes (Top Filtro)")
     df_divs = get_latest_dividends(df_ranking['Ativo'].tolist() if not df_ranking.empty else [])
     if not df_divs.empty:
         df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, use_container_width=True, hide_index=True)
     else:
-        st.info("Nenhum recente.")
-
-
+        st.info("Nenhum dividendo recente encontrado nos ativos filtrados.")
