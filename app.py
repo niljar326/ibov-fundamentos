@@ -1,14 +1,36 @@
 import streamlit as st
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
-# Movemos para cá para evitar conflitos com imports que geram avisos
 st.set_page_config(
     page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
     layout="wide",
     page_icon="🇧🇷"
 )
 
-# --- IMPORTS (DEPOIS DA CONFIG) ---
+# --- 2. CONFIGURAÇÃO ADSENSE (METATAG) ---
+import streamlit.components.v1 as components
+
+def inject_adsense_meta_tag(client_id):
+    # Injeta a meta tag no <head> da página pai (fora do iframe do Streamlit)
+    meta_tag_code = f"""
+    <script>
+        var meta = window.parent.document.createElement('meta');
+        meta.name = "google-adsense-account";
+        meta.content = "{client_id}";
+        window.parent.document.getElementsByTagName('head')[0].appendChild(meta);
+        console.log("AdSense Meta Tag Injected: " + "{client_id}");
+    </script>
+    """
+    components.html(meta_tag_code, height=0)
+
+# !!! SUBSTITUA PELO SEU ID DE PUBLICADOR (EX: ca-pub-1234567890123456) !!!
+ADSENSE_ID = "ca-pub-3077044556128491" 
+
+# Executa a injeção
+inject_adsense_meta_tag(ADSENSE_ID)
+
+
+# --- IMPORTS GERAIS ---
 import pandas as pd
 import plotly.graph_objects as go
 import feedparser
@@ -43,9 +65,8 @@ def update_visitor_counter():
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     
     # 1. Gerenciamento de ID via URL (Query Params)
-    # Compatibilidade com versões novas e antigas do Streamlit
     try:
-        # Tenta pegar query params (versão nova)
+        # Tenta pegar query params (versão nova do Streamlit)
         if hasattr(st, "query_params"):
             current_params = st.query_params
             visitor_id = current_params.get("visitor_id", None)
@@ -90,7 +111,7 @@ def update_visitor_counter():
 try:
     total_visitantes = update_visitor_counter()
 except Exception as e:
-    total_visitantes = 0 # Fallback silencioso em caso de erro no contador
+    total_visitantes = 0 # Fallback silencioso
 
 with st.sidebar:
     st.header("📊 Estatísticas")
