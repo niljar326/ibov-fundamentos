@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import feedparser  # BIBLIOTECA PARA LER RSS
 import yfinance as yf
 import datetime
+from datetime import timedelta
 from time import mktime
 
 # --- Configuração da Página ---
@@ -17,14 +18,13 @@ st.set_page_config(
 # --- CSS Global ---
 st.markdown("""
     <style>
+    /* Cabeçalhos alinhados à direita */
     [data-testid="stDataFrame"] table tr th {
         text-align: right !important;
     }
+    /* Células alinhadas à esquerda/centro visual */
     [data-testid="stDataFrame"] table tr td {
         text-align: left !important;
-    }
-    div[data-testid="stDataFrame"] div[class*="stDataFrame"] {
-        text-align: left;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -43,19 +43,16 @@ def clean_fundamentus_col(x):
     if isinstance(x, (int, float)): return float(x)
     if isinstance(x, str):
         x = x.strip()
-        # Remove % e divide por 100
         if x.endswith('%'):
             x = x.replace('%', '').replace('.', '').replace(',', '.')
             try: return float(x) / 100
             except: return 0.0
-        # Apenas converte número formatado pt-BR
         x = x.replace('.', '').replace(',', '.')
         try: return float(x)
         except: return 0.0
     return 0.0
 
 def format_short_number(val):
-    """Formata números grandes para K, M, B."""
     if pd.isna(val) or val == 0: return ""
     abs_val = abs(val)
     if abs_val >= 1e9:
@@ -88,7 +85,7 @@ def get_ranking_data():
 def apply_filters(df):
     if df.empty: return df
     
-    # Filtros Fundamentalistas
+    # Filtros
     filtro = (
         (df['roe'] > 0.05) & 
         (df['pl'] < 15) & (df['pl'] > 0) & 
@@ -99,7 +96,7 @@ def apply_filters(df):
     )
     df_filtered = df[filtro].copy()
     
-    # Ajustes visuais (multiplicar por 100 para %)
+    # Ajustes visuais
     df_filtered['dy'] = df_filtered['dy'] * 100
     df_filtered['mrgliq'] = df_filtered['mrgliq'] * 100
     df_filtered['roe'] = df_filtered['roe'] * 100
@@ -109,23 +106,21 @@ def apply_filters(df):
         'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'
     }, inplace=True)
     
-    # ORDENAÇÃO SOLICITADA:
-    # 1. Menor P/L (Crescente -> True)
-    # 2. Maior Margem Líquida (Decrescente -> False)
-    return df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False])
+    # Ordenação: Menor P/L e Maior Margem Líquida
+    df_final = df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False])
+    
+    # Reseta o index para garantir que a zebra (cores alternadas) funcione corretamente
+    return df_final.reset_index(drop=True)
 
-# --- Lógica do Gráfico (CORREÇÃO LREN3) ---
+# --- Lógica do Gráfico ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
         stock = yf.Ticker(ticker + ".SA")
-        
-        # Tenta pegar dados financeiros e histórico
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
         hist = stock.history(period="5y")
         
-        # Limpeza de Índices (Datas)
         if not financials.empty: 
             financials.index = pd.to_datetime(financials.index).tz_localize(None)
             financials = financials.sort_index()
@@ -135,8 +130,6 @@ def get_chart_data(ticker):
         if not hist.empty: 
             hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
-        # --- BUSCA DE COLUNAS INTELIGENTE ---
-        # Tenta encontrar a coluna correta varrendo variações de nomes
         def find_col(df, candidates):
             cols = [c for c in df.columns]
             for cand in candidates:
@@ -145,12 +138,10 @@ def get_chart_data(ticker):
                         return col
             return None
 
-        # Lista de possíveis nomes para Receita e Lucro (Inglês e variações)
         rev_candidates = ['Total Revenue', 'Operating Revenue', 'Revenue', 'Receita Total']
         inc_candidates = ['Net Income', 'Net Income Common', 'Net Income Continuous', 'Lucro Liquido']
 
-        cols_ref = financials.columns if not financials.empty else []
-        if len(cols_ref) == 0: return None # Se não tiver colunas, aborta
+        if financials.empty: return None
 
         rev_col = find_col(financials, rev_candidates)
         inc_col = find_col(financials, inc_candidates)
@@ -159,21 +150,18 @@ def get_chart_data(ticker):
 
         data_rows = []
         
-        # A: Últimos 3 anos fechados
+        # Anual
         last_3_years = financials.tail(3)
         for date, row in last_3_years.iterrows():
             year_str = str(date.year)
             price = 0.0
             if not hist.empty:
-                # Pega preço próximo ao fim do ano fiscal
                 df_yr = hist[hist.index.year == date.year]
                 if not df_yr.empty:
                     price = df_yr['Close'].iloc[-1]
                 else:
-                    # Fallback: pega o ultimo preço disponivel antes dessa data
                     mask = hist.index <= date
-                    if mask.any():
-                        price = hist.loc[mask, 'Close'].iloc[-1]
+                    if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
             
             data_rows.append({
                 'Periodo': year_str,
@@ -182,18 +170,14 @@ def get_chart_data(ticker):
                 'Cotação': price
             })
             
-        # B: TTM (Últimos 12 Meses)
-        # Se tiver trimestral, soma os ultimos 4. Se não, usa o último ano como proxy.
+        # TTM
         ttm_rev = 0
         ttm_inc = 0
         has_ttm = False
 
-        if not quarterly.empty and len(quarterly) >= 1:
-            # Tenta pegar 4 trimestres, se não der, pega o que tem
+        if not quarterly.empty:
             q_limit = min(4, len(quarterly))
             last_q = quarterly.tail(q_limit)
-            
-            # Precisamos encontrar as colunas no trimestral também
             q_rev_col = find_col(quarterly, rev_candidates)
             q_inc_col = find_col(quarterly, inc_candidates)
 
@@ -204,8 +188,7 @@ def get_chart_data(ticker):
         
         if has_ttm:
             curr_price = 0.0
-            if not hist.empty:
-                curr_price = hist['Close'].iloc[-1]
+            if not hist.empty: curr_price = hist['Close'].iloc[-1]
                 
             data_rows.append({
                 'Periodo': 'Últimos 12m',
@@ -217,16 +200,14 @@ def get_chart_data(ticker):
         df_final = pd.DataFrame(data_rows)
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
         return df_final
-
     except Exception as e:
-        print(f"Erro Chart {ticker}: {e}") # Log para debug no terminal
+        print(f"Erro Chart {ticker}: {e}")
         return None
 
 # --- Dividendos ---
 @st.cache_data(ttl=3600*6)
 def get_latest_dividends(ticker_list):
     divs_data = []
-    # Pega top 10 para não travar
     for ticker in ticker_list[:10]:
         try:
             stock = yf.Ticker(ticker + ".SA")
@@ -241,7 +222,7 @@ def get_latest_dividends(ticker_list):
         return df.sort_values('Data', ascending=False).head(5)
     return pd.DataFrame()
 
-# --- Notícias ---
+# --- Notícias (AJUSTADO PARA HORÁRIO BRASÍLIA) ---
 @st.cache_data(ttl=1800)
 def get_market_news():
     feeds = {
@@ -255,22 +236,35 @@ def get_market_news():
             feed = feedparser.parse(url)
             for entry in feed.entries[:3]:
                 try:
-                    dt = datetime.datetime.fromtimestamp(mktime(entry.published_parsed))
-                    date_str = dt.strftime("%d/%m %H:%M")
+                    # Converte o struct_time para datetime (assumindo UTC que vem do RSS)
+                    dt_utc = datetime.datetime.fromtimestamp(mktime(entry.published_parsed))
+                    # Subtrai 3 horas para chegar no horário de Brasília
+                    dt_br = dt_utc - timedelta(hours=3)
+                    date_str = dt_br.strftime("%d/%m %H:%M")
+                    # Objeto para ordenação
+                    dt_obj = dt_br
                 except:
-                    dt = datetime.datetime.now()
+                    dt_obj = datetime.datetime.now()
                     date_str = "Recente"
 
                 news_items.append({
                     'title': entry.title,
                     'link': entry.link,
-                    'date_obj': dt,
+                    'date_obj': dt_obj,
                     'date_str': date_str,
                     'source': source
                 })
         except: continue
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
+
+# --- Função de Estilo Zebrado ---
+def highlight_even_rows(row):
+    # Se o índice da linha for par, pinta de cinza claro
+    if row.name % 2 == 0:
+        return ['background-color: #f2f2f2'] * len(row)
+    else:
+        return [''] * len(row)
 
 # --- Interface Principal ---
 st.title("📊 Análise Fundamentalista: Resultados")
@@ -285,11 +279,22 @@ with st.spinner('Processando dados...'):
 # 2. Tabela Principal
 if not df_ranking.empty:
     st.subheader("🏆 Melhores Ações")
-    st.caption("Ordenado por: Menor P/L e Maior Margem Líquida.")
+    st.caption("Ordenado por: Menor P/L (Crescente) e Maior Margem Líquida (Decrescente).")
     
     cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
     
-    # Configuração para garantir que a ordenação interativa funcione
+    # Aplica o estilo Zebrado
+    # O .format() aqui garante que o visual numérico fique correto mesmo com o styler
+    styled_df = df_ranking[cols_view].style.apply(highlight_even_rows, axis=1).format({
+        "Preço": "R$ {:.2f}",
+        "EV/EBIT": "{:.2f}",
+        "P/L": "{:.2f}",
+        "ROE": "{:.2f}",
+        "DY": "{:.2f}",
+        "Margem Líq.": "{:.2f}"
+    })
+
+    # Configuração de Colunas (para alinhamento e tipo)
     column_configuration = {
         "Preço": st.column_config.NumberColumn(format="R$ %.2f"),
         "EV/EBIT": st.column_config.NumberColumn(format="%.2f"),
@@ -300,7 +305,7 @@ if not df_ranking.empty:
     }
 
     st.dataframe(
-        df_ranking[cols_view], 
+        styled_df, 
         use_container_width=True,
         column_config=column_configuration,
         hide_index=True
@@ -312,11 +317,9 @@ if not df_ranking.empty:
     st.subheader("📈 Evolução: Cotação vs Lucro vs Receita")
     
     options = df_ranking['Ativo'].tolist()
-    # Se LREN3 estiver na lista, seleciona ela, senão a primeira
     idx_default = 0
     if 'LREN3' in options:
-        try:
-            idx_default = options.index('LREN3')
+        try: idx_default = options.index('LREN3')
         except: pass
         
     with st.expander("🔎 Selecionar Ação para o Gráfico", expanded=st.session_state.expander_open):
@@ -366,17 +369,9 @@ if not df_ranking.empty:
             fig.update_layout(
                 title=f"{selected}: Análise Visual",
                 xaxis=dict(type='category', title="Período"),
-                yaxis=dict(
-                    title="Receita", side="left", showgrid=False, title_font=dict(color="gray")
-                ),
-                yaxis2=dict(
-                    title="Lucro", side="right", overlaying="y", showgrid=False,
-                    title_font=dict(color="green"), tickfont=dict(color="green")
-                ),
-                yaxis3=dict(
-                    title="Cotação", side="right", overlaying="y", position=0.95, 
-                    showgrid=False, showticklabels=False, title_font=dict(color="blue")
-                ),
+                yaxis=dict(title="Receita", side="left", showgrid=False, title_font=dict(color="gray")),
+                yaxis2=dict(title="Lucro", side="right", overlaying="y", showgrid=False, title_font=dict(color="green")),
+                yaxis3=dict(title="Cotação", side="right", overlaying="y", position=0.95, showgrid=False, showticklabels=False, title_font=dict(color="blue")),
                 legend=dict(orientation="h", y=1.1, x=0),
                 hovermode="x unified",
                 barmode='overlay',
@@ -384,7 +379,7 @@ if not df_ranking.empty:
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning(f"Dados históricos/financeiros indisponíveis para {selected} no Yahoo Finance.")
+            st.warning(f"Dados históricos indisponíveis para {selected}.")
 
 else:
     st.warning("Nenhuma ação passou nos filtros atuais.")
@@ -394,7 +389,7 @@ st.divider()
 # 4. Extras
 c1, c2 = st.columns(2)
 with c1:
-    st.subheader("📰 Notícias")
+    st.subheader("📰 Notícias (Brasília)")
     news = get_market_news()
     if news:
         for n in news:
