@@ -197,23 +197,25 @@ def get_animated_ey_data_dynamic(ticker_list):
     df_final = pd.concat(frames_list)
     return df_final.sort_values(by=['Data_Real', 'EY'], ascending=[True, True])
 
-# --- Lógica do Gráfico de Linha (CORRIGIDO PARA 4 ANOS) ---
+# --- Lógica do Gráfico de Linha (5 ANOS + TTM) ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
         stock = yf.Ticker(ticker + ".SA")
-        # Garante 5 anos para ter margem
+        # Busca 10 anos para garantir que teremos 5 sólidos
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
-        hist = stock.history(period="5y")
+        hist = stock.history(period="10y")
         
         # Limpeza de Datas
         for d in [financials, quarterly, hist]:
             if not d.empty: d.index = pd.to_datetime(d.index).tz_localize(None)
 
-        # Garante ordenação cronológica (Antigo -> Novo)
+        # Garante ordenação (Antigo -> Novo)
         if not financials.empty:
             financials = financials.sort_index()
+        if not quarterly.empty:
+            quarterly = quarterly.sort_index()
 
         def find_col(df, candidates):
             for cand in candidates:
@@ -228,13 +230,12 @@ def get_chart_data(ticker):
 
         data_rows = []
         
-        # --- ALTERAÇÃO: PEGA OS ÚLTIMOS 4 ANOS (tail(4)) ---
-        last_4_years = financials.tail(4)
+        # 1. Pega os últimos 5 anos de dados fechados
+        last_5_years = financials.tail(5)
         
-        for date, row in last_4_years.iterrows():
+        for date, row in last_5_years.iterrows():
             price = 0.0
             if not hist.empty:
-                # Tenta pegar preço no fim do ano fiscal
                 mask = hist.index <= date
                 if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
             
@@ -245,27 +246,34 @@ def get_chart_data(ticker):
                 'Cotação': price
             })
             
-        # Adiciona TTM (Últimos 12 meses)
+        # 2. Adiciona TTM (Últimos 12 meses - SOMA DOS ULTIMOS 4 TRIMESTRES)
         if not quarterly.empty:
             q_rev = find_col(quarterly, ['Total Revenue', 'Revenue'])
             q_inc = find_col(quarterly, ['Net Income', 'Lucro'])
             if q_rev and q_inc:
-                # Soma os últimos 4 trimestres para fazer o anualizado (TTM)
-                ttm_rev = quarterly[q_rev].head(4).sum()
-                ttm_inc = quarterly[q_inc].head(4).sum()
-                curr_price = hist['Close'].iloc[-1] if not hist.empty else 0
+                # Usa tail(4) porque ordenamos ascendente (Antigo->Novo)
+                # Queremos os 4 mais recentes para somar os últimos 12 meses
+                last_4_quarters = quarterly.tail(4)
                 
-                data_rows.append({
-                    'Periodo': 'Últimos 12m', 
-                    'Receita': ttm_rev, 
-                    'Lucro': ttm_inc, 
-                    'Cotação': curr_price
-                })
+                # Só calcula se tivermos de fato 4 trimestres para não distorcer
+                if len(last_4_quarters) >= 1:
+                    ttm_rev = last_4_quarters[q_rev].sum()
+                    ttm_inc = last_4_quarters[q_inc].sum()
+                    curr_price = hist['Close'].iloc[-1] if not hist.empty else 0
+                    
+                    data_rows.append({
+                        'Periodo': 'Últimos 12m', 
+                        'Receita': ttm_rev, 
+                        'Lucro': ttm_inc, 
+                        'Cotação': curr_price
+                    })
         
         df_f = pd.DataFrame(data_rows)
         df_f['Receita_Texto'] = df_f['Receita'].apply(format_short_number)
         return df_f
-    except: return None
+    except Exception as e:
+        print(e)
+        return None
 
 # --- Dividendos ---
 @st.cache_data(ttl=3600*6)
@@ -380,9 +388,9 @@ if not df_best.empty:
     else:
         st.warning("Dados históricos insuficientes para gerar a animação agora.")
 
-# 4. Gráfico Individual (ÚLTIMOS 4 ANOS + TTM)
+# 4. Gráfico Individual (5 ANOS + TTM)
 st.divider()
-st.subheader("📈 Análise Detalhada: Cotação vs Lucro (Últimos 4 Anos)")
+st.subheader("📈 Análise Detalhada: Cotação vs Lucro (5 Anos + TTM)")
 options = df_best['Ativo'].tolist()
 idx_def = options.index('LREN3') if 'LREN3' in options else 0
 with st.expander("🔎 Selecionar Ação", expanded=st.session_state.expander_open):
