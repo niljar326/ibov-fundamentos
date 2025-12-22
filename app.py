@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 import fundamentus
 import plotly.graph_objects as go
-import feedparser  # BIBLIOTECA PARA LER RSS
+import feedparser
 import yfinance as yf
 import datetime
 from datetime import timedelta
 from time import mktime
 
-# --- 1. Configuração da Página (SEO OTIMIZADO) ---
+# --- 1. Configuração da Página (SEO) ---
 st.set_page_config(
     page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
     layout="wide",
@@ -18,27 +18,19 @@ st.set_page_config(
 # --- CSS Global ---
 st.markdown("""
     <style>
-    /* Cabeçalhos alinhados à direita */
-    [data-testid="stDataFrame"] table tr th {
-        text-align: right !important;
-    }
-    /* Células alinhadas à esquerda */
-    [data-testid="stDataFrame"] table tr td {
-        text-align: left !important;
-    }
+    /* Cabeçalhos à direita */
+    [data-testid="stDataFrame"] table tr th { text-align: right !important; }
+    /* Células à esquerda */
+    [data-testid="stDataFrame"] table tr td { text-align: left !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- Gerenciamento de Estado ---
-if 'expander_open' not in st.session_state:
-    st.session_state.expander_open = True
+# --- Estado ---
+if 'expander_open' not in st.session_state: st.session_state.expander_open = True
+def close_expander(): st.session_state.expander_open = False
 
-def close_expander():
-    st.session_state.expander_open = False
-
-# --- Funções Auxiliares ---
+# --- Auxiliares ---
 def clean_fundamentus_col(x):
-    """Converte strings financeiras (ex: '10,5%') para float."""
     if pd.isna(x) or x == '': return 0.0
     if isinstance(x, (int, float)): return float(x)
     if isinstance(x, str):
@@ -55,17 +47,15 @@ def clean_fundamentus_col(x):
 def format_short_number(val):
     if pd.isna(val) or val == 0: return ""
     abs_val = abs(val)
-    if abs_val >= 1e9:
-        return f"{val/1e9:.1f}B"
-    elif abs_val >= 1e6:
-        return f"{val/1e6:.0f}M"
+    if abs_val >= 1e9: return f"{val/1e9:.1f}B"
+    elif abs_val >= 1e6: return f"{val/1e6:.0f}M"
     return f"{val:.0f}"
 
 def get_current_data():
     now = datetime.datetime.now()
     return now.strftime("%B"), now.year
 
-# --- Dados do Ranking ---
+# --- Dados Principais ---
 @st.cache_data(ttl=3600*6)
 def get_ranking_data():
     try:
@@ -73,7 +63,9 @@ def get_ranking_data():
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
         
-        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq']
+        # Adicionamos 'divbpatr' (Dívida) e 'c5y' (Crescimento Receita)
+        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y']
+        
         for col in cols:
             if col in df.columns:
                 df[col] = df[col].apply(clean_fundamentus_col)
@@ -82,20 +74,17 @@ def get_ranking_data():
         return df
     except: return pd.DataFrame()
 
-def apply_filters(df):
+# Filtros da Tabela "Melhores"
+def apply_best_filters(df):
     if df.empty: return df
-    
     filtro = (
-        (df['roe'] > 0.05) & 
-        (df['pl'] < 15) & (df['pl'] > 0) & 
+        (df['roe'] > 0.05) & (df['pl'] < 15) & (df['pl'] > 0) & 
         (df['evebit'] > 0) & (df['evebit'] < 10) &
-        (df['dy'] > 0.04) & 
-        (df['mrgliq'] > 0.05) & 
-        (df['liq2m'] > 200000)
+        (df['dy'] > 0.04) & (df['mrgliq'] > 0.05) & (df['liq2m'] > 200000)
     )
     df_filtered = df[filtro].copy()
     
-    # Ajustes visuais
+    # Ajustes %
     df_filtered['dy'] = df_filtered['dy'] * 100
     df_filtered['mrgliq'] = df_filtered['mrgliq'] * 100
     df_filtered['roe'] = df_filtered['roe'] * 100
@@ -105,9 +94,81 @@ def apply_filters(df):
         'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'
     }, inplace=True)
     
-    # Ordenação padrão
-    df_final = df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False])
-    return df_final.reset_index(drop=True)
+    return df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False]).reset_index(drop=True)
+
+# --- LÓGICA DA TABELA DE RISCO ("ATENÇÃO") ---
+@st.cache_data(ttl=3600*12)
+def get_risk_table(df_original):
+    if df_original.empty: return pd.DataFrame()
+    
+    # Lista Manual de Recuperação Judicial ou Risco Conhecido (Bolsa BR)
+    # Nota: Fundamentus não tem flag de RJ, precisamos listar as conhecidas.
+    lista_rj = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4', 'RCSL3', 'RCSL4', 'RSID3', 'TCNO3', 'TCNO4']
+    
+    # Filtro: Dívida Alta (divbpatr > 3) OU está na lista de RJ
+    # divbpatr é Dívida Bruta / Patrimônio Líquido (proxy para alavancagem alta)
+    mask_risk = (df_original['divbpatr'] > 3.0) | (df_original['papel'].isin(lista_rj))
+    df_risk = df_original[mask_risk].copy()
+    
+    if df_risk.empty: return pd.DataFrame()
+
+    # Vamos calcular a queda de lucro usando YFinance para essas ações
+    risk_data = []
+    
+    # Limita a 15 para não travar o app buscando dados
+    top_risks = df_risk.sort_values(by='divbpatr', ascending=False).head(15)
+    
+    for idx, row in top_risks.iterrows():
+        ticker = row['papel']
+        status = "Recup. Judicial / Reestruturação" if ticker in lista_rj else "Alta Alavancagem"
+        
+        lucro_queda_str = "N/D"
+        val_queda = 0.0
+        
+        try:
+            # Tenta pegar dados do Yahoo Finance
+            stock = yf.Ticker(ticker + ".SA")
+            fin = stock.financials
+            # Tenta pegar Net Income (Lucro Líquido)
+            if not fin.empty:
+                # Procura linha de lucro
+                inc_row = None
+                possible_names = ['Net Income', 'Net Income Common', 'Net Income Continuous']
+                for name in possible_names:
+                    if name in fin.index:
+                        inc_row = fin.loc[name]
+                        break
+                
+                if inc_row is not None and len(inc_row) >= 2:
+                    curr_profit = inc_row.iloc[0] # Mais recente
+                    prev_profit = inc_row.iloc[1] # Ano anterior
+                    
+                    # Se o lucro caiu (atual menor que anterior)
+                    if curr_profit < prev_profit:
+                        # Calcula % de queda
+                        # Se o anterior era negativo, a matemática de % fica estranha, tratamos com abs
+                        diff = (curr_profit - prev_profit)
+                        pct = (diff / abs(prev_profit)) * 100
+                        val_queda = pct # Será negativo
+                        lucro_queda_str = f"{pct:.1f}%"
+                    else:
+                        lucro_queda_str = "Subiu/Estável"
+                else:
+                    lucro_queda_str = "Sem Hist."
+        except:
+            lucro_queda_str = "Erro dados"
+
+        # Só adiciona se tiver queda de lucro OU for RJ
+        if val_queda < 0 or ticker in lista_rj:
+            risk_data.append({
+                'Ativo': ticker,
+                'Preço': row['cotacao'],
+                'Alavancagem (Dív/Patr)': row['divbpatr'],
+                'Queda Lucro (Ano)': lucro_queda_str,
+                'Situação': status
+            })
+
+    return pd.DataFrame(risk_data)
 
 # --- Lógica do Gráfico ---
 @st.cache_data(ttl=3600*24)
@@ -146,31 +207,19 @@ def get_chart_data(ticker):
         if not rev_col or not inc_col: return None
 
         data_rows = []
-        
-        # Anual
         last_3_years = financials.tail(3)
         for date, row in last_3_years.iterrows():
             year_str = str(date.year)
             price = 0.0
             if not hist.empty:
                 df_yr = hist[hist.index.year == date.year]
-                if not df_yr.empty:
-                    price = df_yr['Close'].iloc[-1]
+                if not df_yr.empty: price = df_yr['Close'].iloc[-1]
                 else:
                     mask = hist.index <= date
                     if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
+            data_rows.append({'Periodo': year_str, 'Receita': row[rev_col], 'Lucro': row[inc_col], 'Cotação': price})
             
-            data_rows.append({
-                'Periodo': year_str,
-                'Receita': row[rev_col],
-                'Lucro': row[inc_col],
-                'Cotação': price
-            })
-            
-        # TTM
-        ttm_rev = 0
-        ttm_inc = 0
-        has_ttm = False
+        ttm_rev, ttm_inc, has_ttm = 0, 0, False
         if not quarterly.empty:
             q_limit = min(4, len(quarterly))
             last_q = quarterly.tail(q_limit)
@@ -184,13 +233,7 @@ def get_chart_data(ticker):
         if has_ttm:
             curr_price = 0.0
             if not hist.empty: curr_price = hist['Close'].iloc[-1]
-                
-            data_rows.append({
-                'Periodo': 'Últimos 12m',
-                'Receita': ttm_rev,
-                'Lucro': ttm_inc,
-                'Cotação': curr_price
-            })
+            data_rows.append({'Periodo': 'Últimos 12m', 'Receita': ttm_rev, 'Lucro': ttm_inc, 'Cotação': curr_price})
         
         df_final = pd.DataFrame(data_rows)
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
@@ -208,14 +251,13 @@ def get_latest_dividends(ticker_list):
             if not d.empty:
                 divs_data.append({'Ativo': ticker, 'Valor': d.iloc[-1], 'Data': d.index[-1]})
         except: continue
-    
     if divs_data:
         df = pd.DataFrame(divs_data)
         df['Data'] = pd.to_datetime(df['Data']).dt.tz_localize(None)
         return df.sort_values('Data', ascending=False).head(5)
     return pd.DataFrame()
 
-# --- Notícias (Horário Brasília UTC-3) ---
+# --- Notícias ---
 @st.cache_data(ttl=1800)
 def get_market_news():
     feeds = {
@@ -230,185 +272,132 @@ def get_market_news():
             for entry in feed.entries[:3]:
                 try:
                     dt_utc = datetime.datetime.fromtimestamp(mktime(entry.published_parsed))
-                    dt_br = dt_utc - timedelta(hours=3) # Ajuste UTC-3
+                    dt_br = dt_utc - timedelta(hours=3)
                     date_str = dt_br.strftime("%d/%m %H:%M")
                     dt_obj = dt_br
-                except:
-                    dt_obj = datetime.datetime.now()
-                    date_str = "Recente"
-
-                news_items.append({
-                    'title': entry.title,
-                    'link': entry.link,
-                    'date_obj': dt_obj,
-                    'date_str': date_str,
-                    'source': source
-                })
+                except: dt_obj, date_str = datetime.datetime.now(), "Recente"
+                news_items.append({'title': entry.title, 'link': entry.link, 'date_obj': dt_obj, 'date_str': date_str, 'source': source})
         except: continue
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- Interface Principal ---
-# SEO: Título H1 visível e texto descritivo
+# --- Interface ---
 st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
 st.markdown("""
 <div style="text-align: justify; margin-bottom: 20px;">
-Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades da bolsa de valores brasileira. 
-O algoritmo busca ações com <b>Preço justo (P/L baixo)</b>, <b>Altos Dividendos (Dividend Yield)</b> e <b>Alta Rentabilidade (ROE)</b>.
+Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades. 
+Abaixo, você também encontra uma lista de <b>Alerta</b> para empresas em situações delicadas.
 </div>
 """, unsafe_allow_html=True)
 
-# 1. Carregamento
-with st.spinner('Processando dados...'):
+# 1. Carregamento dos Dados
+with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
-    df_ranking = apply_filters(df_raw)
+    df_best = apply_best_filters(df_raw)
+    df_warning = get_risk_table(df_raw) # Gera tabela de risco
 
-# 2. Tabela Principal
-if not df_ranking.empty:
-    st.subheader("🏆 Melhores Ações")
-    st.caption("Ordenado por: Menor P/L (Crescente) e Maior Margem Líquida (Decrescente).")
+# 2. TABELA 1: MELHORES AÇÕES
+if not df_best.empty:
+    st.subheader("🏆 Melhores Ações (Oportunidades)")
+    st.caption("Filtro: P/L Baixo, Alta Rentabilidade e Dividendos.")
     
     cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
     
-    # Lógica para Colorir Colunas Pares (Visualmente: 2ª, 4ª, 6ª)
-    # Colunas: Ativo(1), Preço(2), EV/EBIT(3), P/L(4), ROE(5), DY(6), Margem(7)
+    # Zebrado nas colunas pares (Cinza Claro)
     even_cols_subset = ['Preço', 'P/L', 'DY']
-    
-    # Aplicando estilo: Cinza Claro (#f2f2f2) nas colunas pares
-    styler = df_ranking[cols_view].style.map(
+    styler = df_best[cols_view].style.map(
         lambda x: 'background-color: #f2f2f2; color: black;', 
         subset=even_cols_subset
     ).format({
-        "Preço": "R$ {:.2f}",
-        "EV/EBIT": "{:.2f}",
-        "P/L": "{:.2f}",
-        "ROE": "{:.2f}",
-        "DY": "{:.2f}",
-        "Margem Líq.": "{:.2f}"
+        "Preço": "R$ {:.2f}", "EV/EBIT": "{:.2f}", "P/L": "{:.2f}",
+        "ROE": "{:.2f}", "DY": "{:.2f}", "Margem Líq.": "{:.2f}"
     })
-
-    column_configuration = {
-        "Preço": st.column_config.NumberColumn(format="R$ %.2f"),
-        "EV/EBIT": st.column_config.NumberColumn(format="%.2f"),
-        "P/L": st.column_config.NumberColumn(format="%.2f"),
-        "ROE": st.column_config.NumberColumn(format="%.2f"),
-        "DY": st.column_config.NumberColumn(format="%.2f"),
-        "Margem Líq.": st.column_config.NumberColumn(format="%.2f"),
-    }
 
     st.dataframe(
         styler, 
         use_container_width=True,
-        column_config=column_configuration,
+        column_config={"Preço": st.column_config.NumberColumn(format="R$ %.2f")},
         hide_index=True
     )
 
-    # SEO: Explicação da Metodologia
-    with st.expander("ℹ️ Sobre a Metodologia (SEO)", expanded=False):
-        st.markdown("""
-        **Como encontrar as melhores ações da Bolsa Brasileira (B3)?**
-        
-        Esta ferramenta realiza uma **análise fundamentalista automática** das ações listadas no Ibovespa e Small Caps. 
-        Utilizamos filtros rigorosos para identificar empresas descontadas e rentáveis:
-        
-        *   **P/L (Preço sobre Lucro):** Buscamos ações baratas com P/L baixo (menor que 15).
-        *   **ROE (Retorno sobre o Patrimônio):** Apenas empresas eficientes com ROE acima de 5%.
-        *   **Dividend Yield (DY):** Foco em renda passiva com dividendos acima de 4% ao ano.
-        
-        Os dados são atualizados em tempo real via Yahoo Finance e Fundamentus.
-        """)
+# 3. TABELA 2: ATENÇÃO (NOVA)
+st.divider()
+st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
+st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
 
-    st.divider()
+if not df_warning.empty:
+    # Colore a porcentagem de queda de vermelho
+    def color_negative_red(val):
+        if isinstance(val, str) and '-' in val:
+            return 'color: red; font-weight: bold;'
+        return ''
 
-    # 3. Gráfico
-    st.subheader("📈 Evolução: Cotação vs Lucro vs Receita")
+    # Configuração visual
+    styler_risk = df_warning.style.map(color_negative_red, subset=['Queda Lucro (Ano)']).format({
+        "Preço": "R$ {:.2f}",
+        "Alavancagem (Dív/Patr)": "{:.2f}"
+    })
     
-    options = df_ranking['Ativo'].tolist()
-    idx_default = 0
-    if 'LREN3' in options:
-        try: idx_default = options.index('LREN3')
-        except: pass
-        
-    with st.expander("🔎 Selecionar Ação para o Gráfico", expanded=st.session_state.expander_open):
-        selected = st.selectbox("Ativo:", options, index=idx_default, on_change=close_expander)
-
-    if selected:
-        with st.spinner(f'Gerando gráfico para {selected}...'):
-            df_chart = get_chart_data(selected)
-
-        if df_chart is not None and not df_chart.empty:
-            
-            fig = go.Figure()
-
-            # EIXO Y1: RECEITA
-            fig.add_trace(go.Bar(
-                x=df_chart['Periodo'], 
-                y=df_chart['Receita'],
-                name="Receita", 
-                marker=dict(color='#A9A9A9', line=dict(color='black', width=1)),
-                text=df_chart['Receita_Texto'],
-                textposition='outside',
-                yaxis='y1' 
-            ))
-
-            # EIXO Y2: LUCRO
-            fig.add_trace(go.Scatter(
-                x=df_chart['Periodo'], 
-                y=df_chart['Lucro'],
-                name="Lucro Líquido", 
-                mode='lines+markers',
-                line=dict(color='#006400', width=3),
-                marker=dict(size=8, color='#006400'),
-                yaxis='y2' 
-            ))
-
-            # EIXO Y3: COTAÇÃO
-            fig.add_trace(go.Scatter(
-                x=df_chart['Periodo'], 
-                y=df_chart['Cotação'],
-                name="Cotação", 
-                mode='lines+markers',
-                line=dict(color='#00008B', width=3),
-                marker=dict(size=8, symbol='diamond', color='#00008B'),
-                yaxis='y3' 
-            ))
-
-            fig.update_layout(
-                title=f"{selected}: Análise Visual",
-                xaxis=dict(type='category', title="Período"),
-                yaxis=dict(title="Receita", side="left", showgrid=False, title_font=dict(color="gray")),
-                yaxis2=dict(title="Lucro", side="right", overlaying="y", showgrid=False, title_font=dict(color="green")),
-                yaxis3=dict(title="Cotação", side="right", overlaying="y", position=0.95, showgrid=False, showticklabels=False, title_font=dict(color="blue")),
-                legend=dict(orientation="h", y=1.1, x=0),
-                hovermode="x unified",
-                barmode='overlay',
-                height=500
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning(f"Dados históricos indisponíveis para {selected}.")
-
+    st.dataframe(
+        styler_risk,
+        use_container_width=True,
+        hide_index=True
+    )
 else:
-    st.warning("Nenhuma ação passou nos filtros atuais.")
+    st.info("Nenhuma ação com os critérios de risco (Dívida Extrema + Queda Lucro) encontrada hoje.")
 
 st.divider()
 
-# 4. Extras
+# 4. GRÁFICO
+st.subheader("📈 Análise Visual: Cotação vs Lucro")
+options = df_best['Ativo'].tolist()
+idx_default = 0
+if 'LREN3' in options:
+    try: idx_default = options.index('LREN3')
+    except: pass
+    
+with st.expander("🔎 Selecionar Ação para o Gráfico", expanded=st.session_state.expander_open):
+    selected = st.selectbox("Ativo:", options, index=idx_default, on_change=close_expander)
+
+if selected:
+    with st.spinner(f'Gerando gráfico para {selected}...'):
+        df_chart = get_chart_data(selected)
+
+    if df_chart is not None and not df_chart.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=df_chart['Periodo'], y=df_chart['Receita'], name="Receita", marker=dict(color='#A9A9A9', line=dict(color='black', width=1)), text=df_chart['Receita_Texto'], textposition='outside', yaxis='y1'))
+        fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Lucro'], name="Lucro Líquido", mode='lines+markers', line=dict(color='#006400', width=3), marker=dict(size=8, color='#006400'), yaxis='y2'))
+        fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='#00008B', width=3), marker=dict(size=8, symbol='diamond', color='#00008B'), yaxis='y3'))
+
+        fig.update_layout(
+            title=f"{selected}: Receita vs Lucro vs Preço",
+            xaxis=dict(type='category', title="Período"),
+            yaxis=dict(title="Receita", side="left", showgrid=False, title_font=dict(color="gray")),
+            yaxis2=dict(title="Lucro", side="right", overlaying="y", showgrid=False, title_font=dict(color="green")),
+            yaxis3=dict(title="Cotação", side="right", overlaying="y", position=0.95, showgrid=False, showticklabels=False, title_font=dict(color="blue")),
+            legend=dict(orientation="h", y=1.1, x=0),
+            hovermode="x unified", barmode='overlay', height=500
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else: st.warning(f"Dados históricos indisponíveis para {selected}.")
+
+st.divider()
+
+# 5. Notícias e Dividendos
 c1, c2 = st.columns(2)
 with c1:
     st.subheader("📰 Notícias (Brasília)")
     news = get_market_news()
     if news:
-        for n in news:
-            st.markdown(f"**[{n['title']}]({n['link']})**  \n*{n['source']} - {n['date_str']}*")
+        for n in news: st.markdown(f"**[{n['title']}]({n['link']})**  \n*{n['source']} - {n['date_str']}*")
     else: st.info("Sem notícias.")
 
 with c2:
-    st.subheader("💰 Dividendos")
-    df_divs = get_latest_dividends(df_ranking['Ativo'].tolist() if not df_ranking.empty else [])
+    st.subheader("💰 Dividendos Recentes")
+    df_divs = get_latest_dividends(df_best['Ativo'].tolist() if not df_best.empty else [])
     if not df_divs.empty:
         df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
