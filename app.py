@@ -122,17 +122,17 @@ def get_risk_table(df_original):
             risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem (Dív/Patr)': row['divbpatr'], 'Queda Lucro (Ano)': lucro_queda_str, 'Situação': status})
     return pd.DataFrame(risk_data)
 
-# --- LÓGICA DO GRÁFICO ANIMADO (Com Forward Fill e Eixos Travados) ---
+# --- LÓGICA DO GRÁFICO ANIMADO DINÂMICO (Rank por Trimestre) ---
 @st.cache_data(ttl=3600*24)
-def get_animated_ey_data(ticker_list):
-    tickers = ticker_list[:10]
+def get_animated_ey_data_dynamic(ticker_list):
+    # Aumentamos o pool para 30 ações para permitir que "novas" entrem no Top 10
+    pool_tickers = ticker_list[:30] 
     raw_data = []
 
-    # 1. Coleta Inicial dos Dados Brutos
-    for t in tickers:
+    # 1. Coleta Dados (Pool Expandido)
+    for t in pool_tickers:
         try:
             stock = yf.Ticker(t + ".SA")
-            # Tenta pegar máximo histórico possível
             q_fin = stock.quarterly_financials.T
             hist = stock.history(period="5y")
             
@@ -170,36 +170,41 @@ def get_animated_ey_data(ticker_list):
     
     df_raw = pd.DataFrame(raw_data)
     
-    # 2. Criação do Esqueleto (Timeline Completa)
-    # Identifica todos os trimestres únicos presentes nos dados
+    # 2. Esqueleto e Preenchimento (Forward Fill)
     all_dates = sorted(df_raw['Data_Real'].unique())
-    
-    # Cria um DataFrame mestre combinando TODAS as datas com TODOS os tickers
-    # Isso garante que a ação não suma do gráfico se faltar dado num trimestre
     master_data = []
-    for t in tickers:
+    for t in pool_tickers:
         for d in all_dates:
             master_data.append({'Ativo': t, 'Data_Real': d})
             
     df_master = pd.DataFrame(master_data)
-    
-    # 3. Merge e Preenchimento (Forward Fill)
     df_merged = pd.merge(df_master, df_raw, on=['Ativo', 'Data_Real'], how='left')
-    
-    # Ordena para o preenchimento funcionar corretamente (por Ativo e Data)
     df_merged = df_merged.sort_values(by=['Ativo', 'Data_Real'])
-    
-    # Preenche valores vazios com o último valor válido daquele ativo (Forward Fill)
-    # Se o começo for vazio, preenche com 0
     df_merged['EY'] = df_merged.groupby('Ativo')['EY'].ffill().fillna(0)
     
-    # 4. Formatação Final
+    # 3. Formatação de Data
     df_merged['Trimestre'] = df_merged['Data_Real'].apply(
         lambda x: f"{x.year}-Q{(x.month-1)//3 + 1}"
     )
+
+    # 4. LÓGICA DE CORTE: TOP 10 POR TRIMESTRE
+    # Aqui é onde a mágica acontece: Para cada trimestre, pegamos só os top 10 DAQUELE MOMENTO.
+    frames_list = []
+    unique_quarters = sorted(df_merged['Trimestre'].unique())
+
+    for q in unique_quarters:
+        # Pega dados daquele trimestre
+        df_q = df_merged[df_merged['Trimestre'] == q].copy()
+        
+        # Ordena e pega Top 10
+        df_q_top = df_q.sort_values(by='EY', ascending=False).head(10)
+        
+        frames_list.append(df_q_top)
+
+    # Reconstrói o DataFrame final apenas com os vencedores de cada rodada
+    df_final = pd.concat(frames_list)
     
-    # Reordena por Data para a animação seguir o tempo
-    return df_merged.sort_values(by='Data_Real')
+    return df_final.sort_values(by=['Data_Real', 'EY'], ascending=[True, True])
 
 # --- Lógica do Gráfico de Linha (Individual) ---
 @st.cache_data(ttl=3600*24)
@@ -303,20 +308,19 @@ if not df_warning.empty:
     st.dataframe(df_warning.style.map(color_red, subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "Alavancagem (Dív/Patr)": "{:.2f}"}), use_container_width=True, hide_index=True)
 else: st.info("Nenhuma ação crítica encontrada.")
 
-# 3. GRÁFICO ANIMADO (Bar Chart Race - Corrigido)
+# 3. GRÁFICO ANIMADO DINÂMICO
 st.divider()
 st.subheader("📺 Corrida de Rentabilidade (Earnings Yield)")
-st.markdown("Visualização animada do **Earnings Yield Trimestral** (LPA / Preço). **Nomes fixos** e dados preenchidos automaticamente.")
+st.markdown("Visualização dinâmica: As ações **entram e saem do Top 10** a cada trimestre conforme seu desempenho histórico.")
 
 if not df_best.empty:
-    with st.spinner("Gerando animação (buscando e preenchendo histórico)..."):
-        top_10_tickers = df_best['Ativo'].head(10).tolist()
-        df_anim = get_animated_ey_data(top_10_tickers)
+    # Aumentamos o pool de busca para Top 30 para permitir rotatividade no gráfico
+    with st.spinner("Analisando histórico de 30 empresas para montar a corrida (pode levar 20s)..."):
+        top_30_tickers = df_best['Ativo'].head(30).tolist()
+        df_anim = get_animated_ey_data_dynamic(top_30_tickers)
 
     if not df_anim.empty:
-        # Cálculo do range máximo para TRAVAR o eixo X (não ficar pulando)
         max_ey = df_anim['EY'].max()
-        # Adiciona uma folga de 10%
         range_x_fixed = [0, max_ey * 1.1]
 
         fig_anim = px.bar(
@@ -326,9 +330,9 @@ if not df_best.empty:
             animation_frame="Trimestre", 
             orientation='h',
             text="EY",
-            range_x=range_x_fixed, # TRAVA A RESOLUÇÃO
+            range_x=range_x_fixed,
             color="Ativo",
-            title="Earnings Yield (%) por Trimestre"
+            title="Top 10 Earnings Yield (%) por Trimestre"
         )
         
         fig_anim.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
@@ -336,14 +340,12 @@ if not df_best.empty:
             xaxis_title="Earnings Yield (LPA/Preço) %",
             yaxis_title="",
             showlegend=False,
-            height=500,
-            # categoryorder='total ascending' faz a animação reordenar as barras (corrida)
-            # Como garantimos dados para todos, as 10 sempre aparecerão
-            yaxis={'categoryorder':'total ascending'} 
+            height=600, # Aumentei um pouco altura
+            yaxis={'categoryorder':'total ascending'} # Isso ajuda a ordenar visualmente
         )
         
         st.plotly_chart(fig_anim, use_container_width=True)
-        st.caption("*Nota: Trimestres sem dados oficiais são preenchidos com o último valor válido (Forward Fill) para manter a continuidade visual.*")
+        st.caption("*Nota: O gráfico seleciona dinamicamente as 10 melhores daquele trimestre dentre as Top 30 atuais.*")
     else:
         st.warning("Dados históricos insuficientes para gerar a animação agora.")
 
