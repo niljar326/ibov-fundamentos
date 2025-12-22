@@ -4,3 +4,4 @@ fundamentus
 plotly
 GoogleNews
 yfinance
+feedparser
