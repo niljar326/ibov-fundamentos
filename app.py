@@ -19,9 +19,7 @@ st.set_page_config(
 # --- CSS Global ---
 st.markdown("""
     <style>
-    /* Cabeçalhos à direita */
     [data-testid="stDataFrame"] table tr th { text-align: right !important; }
-    /* Células à esquerda */
     [data-testid="stDataFrame"] table tr td { text-align: left !important; }
     </style>
 """, unsafe_allow_html=True)
@@ -122,13 +120,14 @@ def get_risk_table(df_original):
             risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem (Dív/Patr)': row['divbpatr'], 'Queda Lucro (Ano)': lucro_queda_str, 'Situação': status})
     return pd.DataFrame(risk_data)
 
-# --- LÓGICA DO GRÁFICO ANIMADO DINÂMICO (Rank por Trimestre) ---
+# --- LÓGICA DO GRÁFICO ANIMADO (COM SETAS E SLOW MOTION) ---
 @st.cache_data(ttl=3600*24)
 def get_animated_ey_data_dynamic(ticker_list):
+    # Aumentamos o pool para 30 para ter "reserva" de ações entrando
     pool_tickers = ticker_list[:30] 
     raw_data = []
 
-    # 1. Coleta Dados (Pool Expandido)
+    # 1. Coleta
     for t in pool_tickers:
         try:
             stock = yf.Ticker(t + ".SA")
@@ -143,7 +142,6 @@ def get_animated_ey_data_dynamic(ticker_list):
                 if c in possible_cols:
                     eps_col = c
                     break
-            
             if not eps_col: continue 
 
             for date, row in q_fin.iterrows():
@@ -158,18 +156,15 @@ def get_animated_ey_data_dynamic(ticker_list):
                 
                 if price_at_date > 0:
                     ey_val = (eps_val / price_at_date) * 100
-                    if ey_val < 500: # Filtro de erro
-                        raw_data.append({
-                            'Ativo': t,
-                            'Data_Real': date_clean,
-                            'EY': ey_val
-                        })
+                    if ey_val < 500: # Remove erros absurdos
+                        raw_data.append({'Ativo': t, 'Data_Real': date_clean, 'EY': ey_val})
         except: continue
 
     if not raw_data: return pd.DataFrame()
     
     df_raw = pd.DataFrame(raw_data)
     
+    # 2. Preenchimento (Forward Fill)
     all_dates = sorted(df_raw['Data_Real'].unique())
     master_data = []
     for t in pool_tickers:
@@ -181,19 +176,40 @@ def get_animated_ey_data_dynamic(ticker_list):
     df_merged = df_merged.sort_values(by=['Ativo', 'Data_Real'])
     df_merged['EY'] = df_merged.groupby('Ativo')['EY'].ffill().fillna(0)
     
-    df_merged['Trimestre'] = df_merged['Data_Real'].apply(
-        lambda x: f"{x.year}-Q{(x.month-1)//3 + 1}"
-    )
+    df_merged['Trimestre'] = df_merged['Data_Real'].apply(lambda x: f"{x.year}-Q{(x.month-1)//3 + 1}")
 
+    # 3. LÓGICA DE CORTE TOP 10 + DETECÇÃO DE ENTRADA (SETAS)
     frames_list = []
     unique_quarters = sorted(df_merged['Trimestre'].unique())
+    
+    previous_top_10 = set()
 
     for q in unique_quarters:
+        # Pega Top 10 estrito deste trimestre
         df_q = df_merged[df_merged['Trimestre'] == q].copy()
-        df_q_top = df_q.sort_values(by='EY', ascending=False).head(10)
+        df_q_top = df_q.sort_values(by='EY', ascending=False).head(10).copy()
+        
+        # Lógica de Marcadores Visuais no Nome
+        def set_label(row):
+            ticker = row['Ativo']
+            # Se é o primeiro frame, não tem setas
+            if not previous_top_10: return ticker
+            
+            # Se a empresa NÃO estava no Top 10 anterior, é novidade (Seta Verde)
+            if ticker not in previous_top_10:
+                return f"{ticker} 🟢" # Entrada Nova
+            
+            return ticker # Apenas mantém o nome
+
+        df_q_top['Label'] = df_q_top.apply(set_label, axis=1)
+        
+        # Atualiza a lista de "anteriores" para o próximo loop
+        previous_top_10 = set(df_q_top['Ativo'].tolist())
+        
         frames_list.append(df_q_top)
 
     df_final = pd.concat(frames_list)
+    # Ordena para a animação
     return df_final.sort_values(by=['Data_Real', 'EY'], ascending=[True, True])
 
 # --- Lógica do Gráfico de Linha ---
@@ -295,8 +311,6 @@ st.divider()
 st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
 if not df_warning.empty:
     def color_red(v): return 'color: red; font-weight: bold;' if isinstance(v, str) and '-' in v else ''
-    
-    # AQUI ESTAVA O ERRO - Corrigido com quebras de linha seguras
     st.dataframe(
         df_warning.style.map(color_red, subset=['Queda Lucro (Ano)']).format({
             "Preço": "R$ {:.2f}", 
@@ -310,7 +324,7 @@ else: st.info("Nenhuma ação crítica encontrada.")
 # 3. GRÁFICO ANIMADO DINÂMICO
 st.divider()
 st.subheader("📺 Corrida de Rentabilidade (Earnings Yield)")
-st.markdown("Visualização dinâmica: As ações **entram e saem do Top 10** a cada trimestre.")
+st.markdown("Visualização dinâmica: **🟢 Seta Verde** indica empresa nova no Top 10 naquele trimestre.")
 
 if not df_best.empty:
     with st.spinner("Analisando histórico de 30 empresas para montar a corrida (pode levar 20s)..."):
@@ -318,29 +332,35 @@ if not df_best.empty:
         df_anim = get_animated_ey_data_dynamic(top_30_tickers)
 
     if not df_anim.empty:
-        # Usa percentil 95 para ignorar outliers que distorcem o gráfico
         max_ey_reasonable = df_anim['EY'].quantile(0.95)
         max_limit = max(max_ey_reasonable * 1.2, 15.0)
 
+        # Usamos 'Label' no Eixo Y para mostrar a seta, mas 'Ativo' na cor para manter consistência
         fig_anim = px.bar(
             df_anim, 
             x="EY", 
-            y="Ativo", 
+            y="Label",  # AQUI MOSTRA O NOME + SETA
             animation_frame="Trimestre", 
             orientation='h',
             text="EY",
             range_x=[0, max_limit], 
-            color="Ativo",
+            color="Ativo", # Cor fixa pelo ticker real
             title="Top 10 Earnings Yield (%) por Trimestre"
         )
         
         fig_anim.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+        
+        # --- CONFIGURAÇÃO DE VELOCIDADE (SLOW MOTION) ---
+        fig_anim.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 2000 # 2000ms = 2 segundos por quadro
+        fig_anim.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 800 # Transição suave
+
         fig_anim.update_layout(
             xaxis_title="Earnings Yield (LPA/Preço) %",
             yaxis_title="",
             showlegend=False,
             height=600,
-            yaxis={'categoryorder':'total ascending'}
+            # Força ordenação visual do maior para o menor
+            yaxis={'categoryorder':'total ascending'} 
         )
         
         st.plotly_chart(fig_anim, use_container_width=True)
