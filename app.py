@@ -8,9 +8,12 @@ import datetime
 from datetime import timedelta
 from time import mktime
 
+st.markdown("# 🇧🇷 Screener Fundamentalista: As Ações Mais Baratas do Brasil")
+st.markdown("### Ranking atualizado de ações com menor P/L, maiores Dividendos e alta eficiência (ROE).")
+
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Blog Ibovespa - Fundamentalista",
+    age_title="Ranking de Ações Ibovespa 2025 - Análise Fundamentalista e Dividendos",
     layout="wide",
     page_icon="🇧🇷"
 )
@@ -258,6 +261,21 @@ with st.spinner('Processando dados...'):
     df_raw = get_ranking_data()
     df_ranking = apply_filters(df_raw)
 
+ith st.expander("ℹ️ Sobre a Metodologia (SEO)", expanded=False):
+    st.markdown("""
+    **Como encontrar as melhores ações da Bolsa Brasileira (B3)?**
+    
+    Esta ferramenta realiza uma **análise fundamentalista automática** das ações listadas no Ibovespa e Small Caps. 
+    Utilizamos filtros rigorosos para identificar empresas descontadas e rentáveis:
+    
+    *   **P/L (Preço sobre Lucro):** Buscamos ações baratas com P/L baixo (menor que 15).
+    *   **ROE (Retorno sobre o Patrimônio):** Apenas empresas eficientes com ROE acima de 5%.
+    *   **Dividend Yield (DY):** Foco em renda passiva com dividendos acima de 4% ao ano.
+    *   **Margem Líquida:** Empresas que transformam receita em lucro real.
+    
+    Os dados são atualizados em tempo real via Yahoo Finance e Fundamentus, focando em ativos como VALE3, PETR4, WEGE3, BBAS3, ITUB4, LREN3, entre outros.
+    """)
+
 # 2. Tabela Principal
 if not df_ranking.empty:
     st.subheader("🏆 Melhores Ações")
@@ -392,3 +410,4 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
+
