@@ -120,14 +120,12 @@ def get_risk_table(df_original):
             risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem (Dív/Patr)': row['divbpatr'], 'Queda Lucro (Ano)': lucro_queda_str, 'Situação': status})
     return pd.DataFrame(risk_data)
 
-# --- LÓGICA DO GRÁFICO ANIMADO (COM SETAS E SLOW MOTION) ---
+# --- LÓGICA DO GRÁFICO ANIMADO ---
 @st.cache_data(ttl=3600*24)
 def get_animated_ey_data_dynamic(ticker_list):
-    # Aumentamos o pool para 30 para ter "reserva" de ações entrando
     pool_tickers = ticker_list[:30] 
     raw_data = []
 
-    # 1. Coleta
     for t in pool_tickers:
         try:
             stock = yf.Ticker(t + ".SA")
@@ -156,7 +154,7 @@ def get_animated_ey_data_dynamic(ticker_list):
                 
                 if price_at_date > 0:
                     ey_val = (eps_val / price_at_date) * 100
-                    if ey_val < 500: # Remove erros absurdos
+                    if ey_val < 500: 
                         raw_data.append({'Ativo': t, 'Data_Real': date_clean, 'EY': ey_val})
         except: continue
 
@@ -164,7 +162,6 @@ def get_animated_ey_data_dynamic(ticker_list):
     
     df_raw = pd.DataFrame(raw_data)
     
-    # 2. Preenchimento (Forward Fill)
     all_dates = sorted(df_raw['Data_Real'].unique())
     master_data = []
     for t in pool_tickers:
@@ -178,49 +175,45 @@ def get_animated_ey_data_dynamic(ticker_list):
     
     df_merged['Trimestre'] = df_merged['Data_Real'].apply(lambda x: f"{x.year}-Q{(x.month-1)//3 + 1}")
 
-    # 3. LÓGICA DE CORTE TOP 10 + DETECÇÃO DE ENTRADA (SETAS)
     frames_list = []
     unique_quarters = sorted(df_merged['Trimestre'].unique())
-    
     previous_top_10 = set()
 
     for q in unique_quarters:
-        # Pega Top 10 estrito deste trimestre
         df_q = df_merged[df_merged['Trimestre'] == q].copy()
         df_q_top = df_q.sort_values(by='EY', ascending=False).head(10).copy()
         
-        # Lógica de Marcadores Visuais no Nome
         def set_label(row):
             ticker = row['Ativo']
-            # Se é o primeiro frame, não tem setas
             if not previous_top_10: return ticker
-            
-            # Se a empresa NÃO estava no Top 10 anterior, é novidade (Seta Verde)
             if ticker not in previous_top_10:
-                return f"{ticker} 🟢" # Entrada Nova
-            
-            return ticker # Apenas mantém o nome
+                return f"{ticker} 🟢"
+            return ticker
 
         df_q_top['Label'] = df_q_top.apply(set_label, axis=1)
-        
-        # Atualiza a lista de "anteriores" para o próximo loop
         previous_top_10 = set(df_q_top['Ativo'].tolist())
-        
         frames_list.append(df_q_top)
 
     df_final = pd.concat(frames_list)
-    # Ordena para a animação
     return df_final.sort_values(by=['Data_Real', 'EY'], ascending=[True, True])
 
-# --- Lógica do Gráfico de Linha ---
+# --- Lógica do Gráfico de Linha (CORRIGIDO PARA 4 ANOS) ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
         stock = yf.Ticker(ticker + ".SA")
-        financials, quarterly, hist = stock.financials.T, stock.quarterly_financials.T, stock.history(period="5y")
+        # Garante 5 anos para ter margem
+        financials = stock.financials.T
+        quarterly = stock.quarterly_financials.T
+        hist = stock.history(period="5y")
         
+        # Limpeza de Datas
         for d in [financials, quarterly, hist]:
             if not d.empty: d.index = pd.to_datetime(d.index).tz_localize(None)
+
+        # Garante ordenação cronológica (Antigo -> Novo)
+        if not financials.empty:
+            financials = financials.sort_index()
 
         def find_col(df, candidates):
             for cand in candidates:
@@ -234,18 +227,40 @@ def get_chart_data(ticker):
         if not rev_col or not inc_col: return None
 
         data_rows = []
-        for date, row in financials.tail(3).iterrows():
+        
+        # --- ALTERAÇÃO: PEGA OS ÚLTIMOS 4 ANOS (tail(4)) ---
+        last_4_years = financials.tail(4)
+        
+        for date, row in last_4_years.iterrows():
             price = 0.0
             if not hist.empty:
+                # Tenta pegar preço no fim do ano fiscal
                 mask = hist.index <= date
                 if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
-            data_rows.append({'Periodo': str(date.year), 'Receita': row[rev_col], 'Lucro': row[inc_col], 'Cotação': price})
             
+            data_rows.append({
+                'Periodo': str(date.year), 
+                'Receita': row[rev_col], 
+                'Lucro': row[inc_col], 
+                'Cotação': price
+            })
+            
+        # Adiciona TTM (Últimos 12 meses)
         if not quarterly.empty:
             q_rev = find_col(quarterly, ['Total Revenue', 'Revenue'])
             q_inc = find_col(quarterly, ['Net Income', 'Lucro'])
             if q_rev and q_inc:
-                data_rows.append({'Periodo': 'Últimos 12m', 'Receita': quarterly[q_rev].head(4).sum(), 'Lucro': quarterly[q_inc].head(4).sum(), 'Cotação': hist['Close'].iloc[-1] if not hist.empty else 0})
+                # Soma os últimos 4 trimestres para fazer o anualizado (TTM)
+                ttm_rev = quarterly[q_rev].head(4).sum()
+                ttm_inc = quarterly[q_inc].head(4).sum()
+                curr_price = hist['Close'].iloc[-1] if not hist.empty else 0
+                
+                data_rows.append({
+                    'Periodo': 'Últimos 12m', 
+                    'Receita': ttm_rev, 
+                    'Lucro': ttm_inc, 
+                    'Cotação': curr_price
+                })
         
         df_f = pd.DataFrame(data_rows)
         df_f['Receita_Texto'] = df_f['Receita'].apply(format_short_number)
@@ -324,7 +339,7 @@ else: st.info("Nenhuma ação crítica encontrada.")
 # 3. GRÁFICO ANIMADO DINÂMICO
 st.divider()
 st.subheader("📺 Corrida de Rentabilidade (Earnings Yield)")
-st.markdown("Visualização dinâmica: **🟢 Seta Verde** indica empresa nova no Top 10 naquele trimestre.")
+st.markdown("Visualização dinâmica: **🟢 Seta Verde** indica empresa nova no Top 10.")
 
 if not df_best.empty:
     with st.spinner("Analisando histórico de 30 empresas para montar a corrida (pode levar 20s)..."):
@@ -335,64 +350,26 @@ if not df_best.empty:
         max_ey_reasonable = df_anim['EY'].quantile(0.95)
         max_limit = max(max_ey_reasonable * 1.2, 15.0)
 
-        # Usamos 'Label' no Eixo Y para mostrar a seta, mas 'Ativo' na cor para manter consistência
         fig_anim = px.bar(
             df_anim, 
             x="EY", 
-            y="Label",  # AQUI MOSTRA O NOME + SETA
+            y="Label", 
             animation_frame="Trimestre", 
             orientation='h',
             text="EY",
             range_x=[0, max_limit], 
-            color="Ativo", # Cor fixa pelo ticker real
+            color="Ativo", 
             title="Top 10 Earnings Yield (%) por Trimestre"
         )
         
         fig_anim.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
         
-        # --- CONFIGURAÇÃO DE VELOCIDADE (SLOW MOTION) ---
-        fig_anim.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 2000 # 2000ms = 2 segundos por quadro
-        fig_anim.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 800 # Transição suave
+        # Slow Motion (2s por frame)
+        fig_anim.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 2000
+        fig_anim.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 800
 
         fig_anim.update_layout(
             xaxis_title="Earnings Yield (LPA/Preço) %",
             yaxis_title="",
             showlegend=False,
             height=600,
-            # Força ordenação visual do maior para o menor
-            yaxis={'categoryorder':'total ascending'} 
-        )
-        
-        st.plotly_chart(fig_anim, use_container_width=True)
-    else:
-        st.warning("Dados históricos insuficientes para gerar a animação agora.")
-
-# 4. Gráfico Individual
-st.divider()
-st.subheader("📈 Análise Detalhada: Cotação vs Lucro")
-options = df_best['Ativo'].tolist()
-idx_def = options.index('LREN3') if 'LREN3' in options else 0
-with st.expander("🔎 Selecionar Ação", expanded=st.session_state.expander_open):
-    sel = st.selectbox("Ativo:", options, index=idx_def, on_change=close_expander)
-
-if sel:
-    with st.spinner(f'Gerando gráfico para {sel}...'):
-        df_c = get_chart_data(sel)
-    if df_c is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=df_c['Periodo'], y=df_c['Receita'], name="Receita", marker=dict(color='#A9A9A9'), text=df_c['Receita_Texto'], textposition='outside', yaxis='y1'))
-        fig.add_trace(go.Scatter(x=df_c['Periodo'], y=df_c['Lucro'], name="Lucro", mode='lines+markers', line=dict(color='green', width=3), yaxis='y2'))
-        fig.add_trace(go.Scatter(x=df_c['Periodo'], y=df_c['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='blue', width=3), yaxis='y3'))
-        fig.update_layout(title=f"{sel}: Receita vs Lucro vs Preço", xaxis=dict(title="Período"), yaxis=dict(title="Receita", showgrid=False), yaxis2=dict(title="Lucro", overlaying="y", side="right", showgrid=False), yaxis3=dict(title="Cotação", overlaying="y", side="right", position=0.95, showgrid=False), legend=dict(orientation="h", y=1.1))
-        st.plotly_chart(fig, use_container_width=True)
-    else: st.warning("Sem dados.")
-
-# 5. Notícias/Divs
-st.divider()
-c1, c2 = st.columns(2)
-with c1:
-    st.subheader("📰 Notícias (Brasília)")
-    for n in get_market_news(): st.markdown(f"**[{n['title']}]({n['link']})**\n*{n['source']} - {n['date_str']}*")
-with c2:
-    st.subheader("💰 Dividendos Recentes")
-    st.dataframe(get_latest_dividends(df_best['Ativo'].tolist()), hide_index=True)
