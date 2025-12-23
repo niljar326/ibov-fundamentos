@@ -335,26 +335,30 @@ def get_market_news():
     return news_items[:6]
 
 # --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL - SÓ LOWER BAND) ---
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=600) # Cache mais curto para ser quase "tempo real"
 def scan_bollinger_br_weekly_lower():
+    # Lista Robusta de Ações B3 (Incluindo LREN3, Varejo, Bancos, Commodities)
     tickers_br = [
-        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA",
-        "LREN3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
-        "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA",
-        "AZUL4.SA", "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA",
-        "TOTS3.SA", "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA", "ABEV3.SA"
+        "LREN3.SA", "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", 
+        "MGLU3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
+        "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA", "AZUL4.SA", 
+        "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA", "TOTS3.SA", 
+        "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA", "ABEV3.SA", "ASAI3.SA", "CRFB3.SA", "MULT3.SA",
+        "CYRE3.SA", "EZTC3.SA", "MRVE3.SA", "PETZ3.SA", "SOMA3.SA", "ALPA4.SA"
     ]
     
     candidates = []
     
     try:
-        # Baixa dados SEMANAIS ('1wk')
+        # Baixa dados SEMANAIS ('1wk') dos últimos 2 anos
         data = yf.download(tickers_br, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
         
         for t in tickers_br:
             try:
                 df_t = data[t].copy() if t in data else pd.DataFrame()
                 if df_t.empty: continue
+                
+                # Limpeza básica
                 df_t.dropna(subset=['Close'], inplace=True)
                 if len(df_t) < 22: continue
 
@@ -392,9 +396,17 @@ def show_chart_widget(symbol_tv):
       <script type="text/javascript">
       new TradingView.widget(
       {{
-        "width": "100%", "height": 500, "symbol": "{symbol_tv}", "interval": "W", 
-        "timezone": "America/Sao_Paulo", "theme": "light", "style": "1", "locale": "br",
-        "toolbar_bg": "#f1f3f6", "enable_publishing": false, "allow_symbol_change": true,
+        "width": "100%",
+        "height": 500,
+        "symbol": "{symbol_tv}",
+        "interval": "W", 
+        "timezone": "America/Sao_Paulo",
+        "theme": "light",
+        "style": "1",
+        "locale": "br",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "allow_symbol_change": true,
         "studies": ["BB@tv-basicstudies"], "container_id": "tradingview_chart"
       }});
       </script>
@@ -526,7 +538,9 @@ with tab2:
     """, unsafe_allow_html=True)
     
     col_list, col_chart = st.columns([1, 2])
-    selected_tv_symbol = "BMFBOVESPA:PETR4"
+    
+    # Define um padrão inicial caso a lista esteja vazia ou nada selecionado
+    selected_tv_symbol = "BMFBOVESPA:LREN3"
     
     with col_list:
         if not df_scan_bb.empty:
@@ -545,6 +559,7 @@ with tab2:
                 selected_index = event.selection.rows[0]
                 selected_tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
             elif not df_scan_bb.empty:
+                # Se houver itens mas nada clicado, seleciona o primeiro
                 selected_tv_symbol = df_scan_bb.iloc[0]['TV_Symbol']
         else:
             st.info("Nenhuma ação brasileira tocando a banda inferior nesta semana.")
