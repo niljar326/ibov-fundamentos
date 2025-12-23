@@ -7,22 +7,6 @@ st.set_page_config(
     page_icon="🇧🇷"
 )
 
-# --- 2. CONFIGURAÇÃO ADSENSE (METATAG) ---
-import streamlit.components.v1 as components
-
-def inject_adsense_script(client_id):
-    # Código Javascript que força a entrada do script no <head>
-    adsense_script = f"""
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client_id}"
-     crossorigin="anonymous"></script>
-    """
-    # Injeta
-    components.html(adsense_script, height=0)
-
-# Coloque seu ID aqui
-ADSENSE_ID = "ca-pub-3077044556128491" 
-inject_adsense_script(ADSENSE_ID)
-
 
 # --- IMPORTS GERAIS ---
 import pandas as pd
@@ -465,6 +449,7 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
+
 
 
 
