@@ -38,6 +38,13 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
+    
+    /* Estilo para o botão de Pix */
+    div.stButton > button:first-child {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -91,10 +98,12 @@ try:
 except Exception as e:
     total_visitantes = 0 
 
+# --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.header("📊 Estatísticas")
     st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos (não conta F5)")
     st.divider()
+            
     st.caption("Desenvolvido com Streamlit")
 
 # --- Estado ---
@@ -542,6 +551,11 @@ with tab1:
 # === ABA 2: NOVO SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
 with tab2:
     st.subheader("📉 Setup: Bandas de Bollinger Semanal (Lower Band)")
+    
+    # --- NOVO ALERTA SOLICITADO ---
+    st.warning("⚠️ **Atenção:** Este filtro mostra ações tocando a banda inferior. Considere o fato de que ações em forte tendência de baixa podem continuar caindo ('caminhando pela banda'). Avalie o contexto gráfico antes de operar.")
+    # ------------------------------
+
     st.markdown("""
     Esta ferramenta rastreia automaticamente ações da B3 onde a **Mínima Semanal (Low)** tocou ou rompeu a **Banda Inferior (Lower)**.
     <br><small>*Clique em uma linha da tabela para visualizar o gráfico interativo.*</small>
