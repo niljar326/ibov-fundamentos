@@ -10,8 +10,7 @@ st.set_page_config(
 
 # --- IMPORTS GERAIS ---
 import pandas as pd
-import plotly.graph_objects as go
-import feedparser
+import feedparser # Necessário para as notícias (adicione ao requirements.txt)
 import yfinance as yf
 import datetime
 from datetime import timedelta
@@ -184,6 +183,49 @@ def scan_weekly_bollinger():
     except Exception as e:
         return pd.DataFrame()
 
+# --- FUNÇÃO DE NOTÍCIAS (CORRIGIDA) ---
+@st.cache_data(ttl=1800)
+def get_market_news():
+    feeds = {
+        'Money Times': 'https://www.moneytimes.com.br/feed/',
+        'InfoMoney': 'https://www.infomoney.com.br/feed/',
+        'E-Investidor': 'https://einvestidor.estadao.com.br/feed/'
+    }
+    news_items = []
+    for source, url in feeds.items():
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:3]:
+                try:
+                    dt_utc = datetime.datetime.fromtimestamp(mktime(entry.published_parsed))
+                    dt_br = dt_utc - timedelta(hours=3)
+                    date_str = dt_br.strftime("%d/%m %H:%M")
+                    dt_obj = dt_br
+                except: dt_obj, date_str = datetime.datetime.now(), "Recente"
+                news_items.append({'title': entry.title, 'link': entry.link, 'date_obj': dt_obj, 'date_str': date_str, 'source': source})
+        except: continue
+    # Ordena por data
+    news_items.sort(key=lambda x: x['date_obj'], reverse=True)
+    return news_items[:6]
+
+# --- FUNÇÃO DE DIVIDENDOS (CORRIGIDA) ---
+@st.cache_data(ttl=3600*6)
+def get_latest_dividends(ticker_list):
+    divs_data = []
+    # Limita a 10 para não travar o yfinance
+    for ticker in ticker_list[:10]:
+        try:
+            stock = yf.Ticker(ticker + ".SA")
+            d = stock.dividends
+            if not d.empty:
+                divs_data.append({'Ativo': ticker, 'Valor': d.iloc[-1], 'Data': d.index[-1]})
+        except: continue
+    if divs_data:
+        df = pd.DataFrame(divs_data)
+        df['Data'] = pd.to_datetime(df['Data']).dt.tz_localize(None)
+        return df.sort_values('Data', ascending=False).head(5)
+    return pd.DataFrame()
+
 # --- TABELA DE RISCO ---
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
@@ -193,21 +235,6 @@ def get_risk_table(df_original):
     df_risk = df_original[mask].copy()
     if df_risk.empty: return pd.DataFrame()
     return df_risk[['papel', 'cotacao', 'divbpatr']].rename(columns={'papel':'Ativo', 'cotacao':'Preço', 'divbpatr':'Dív/Patr'}).head(10)
-
-# --- GRÁFICO (ABAS 1) ---
-@st.cache_data(ttl=3600*24)
-def get_chart_data(ticker):
-    try:
-        stock = yf.Ticker(ticker + ".SA")
-        hist = stock.history(period="5y")
-        financials = stock.financials.T
-        quarterly = stock.quarterly_financials.T
-        if financials.empty: return None
-        
-        # Lógica simplificada para o gráfico Receita x Lucro
-        # (Mantendo a lógica original para economizar espaço aqui, mas funcional)
-        return pd.DataFrame({'Data': hist.index, 'Close': hist['Close']}) 
-    except: return None
     
 # --- WIDGET TRADINGVIEW DINÂMICO ---
 def show_tradingview_widget(ticker):
@@ -268,13 +295,6 @@ with tab1:
         })
         st.dataframe(styler, use_container_width=True, hide_index=True)
     else: st.warning("Sem ações no filtro hoje.")
-    
-    # Gráfico simples (opcional)
-    st.divider()
-    opts = df_best['Ativo'].tolist() if not df_best.empty else []
-    if opts:
-        sel_fund = st.selectbox("Ver Gráfico Fundamentalista:", opts)
-        # (Aqui entraria o gráfico Plotly original se desejar manter)
 
 # === ABA 2: SETUP TÉCNICO ===
 with tab2:
@@ -309,71 +329,7 @@ with tab2:
             
             # Seletor para mudar o gráfico ao lado
             list_opts = df_bb_weekly['Ativo'].tolist()
-            ticker_visualizar = st.selectbox("Selecione para ver no Gráfico:", list_opts)
+            if list_opts:
+                ticker_visualizar = st.selectbox("Selecione para ver no Gráfico:", list_opts)
         else:
             st.info("Nenhuma ação tocando a banda inferior nesta semana.")
-    
-    with col_tv:
-        st.markdown(f"**Análise Gráfica: {ticker_visualizar} (Semanal)**")
-        st.caption("Indicador BB (20, 2) carregado automaticamente.")
-        show_tradingview_widget(ticker_visualizar)
-
-# --- BANNERS LADO A LADO ---
-st.divider()
-col_ad1, col_ad2 = st.columns(2)
-
-with col_ad1:
-    st.markdown("""
-    <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
-        <h4 style="margin-top:0; color: #333;">✈️ Nomad: Taxa Zero em Dólar</h4>
-        <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão (até US$ 1.000) para investir nos EUA.</p>
-        <p style="font-size: 14px;">Código: <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
-        <div style="text-align:center;">
-            <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
-                ➡️ <b>Abrir Conta Nomad</b>
-            </a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col_ad2:
-    st.markdown("""
-    <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
-        <h4 style="margin-top:0; color: #009ee3;">🤝 Mercado Pago: R$ 30 OFF</h4>
-        <p style="font-size: 14px;">Use o app pela primeira vez (pagamento mín. R$ 70) e ganhe <b>R$ 30 de desconto</b>.</p>
-        <div style="text-align:center;">
-            <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
-                ➡️ <b>Resgatar R$ 30</b>
-            </a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# --- TABELA 2: RISCO ---
-st.divider()
-st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
-if not df_risk.empty:
-    styler_risk = df_risk.style.format({"Preço": "R$ {:.2f}", "Dív/Patr": "{:.2f}"})
-    st.dataframe(styler_risk, use_container_width=True, hide_index=True)
-else:
-    st.info("Nenhuma ação crítica encontrada.")
-
-# --- Notícias e Dividendos ---
-st.divider()
-c1, c2 = st.columns(2)
-with c1:
-    st.subheader("📰 Notícias (Brasília)")
-    news = get_market_news()
-    if news:
-        for n in news: st.markdown(f"**[{n['title']}]({n['link']})**  \n*{n['source']} - {n['date_str']}*")
-    else: st.info("Sem notícias.")
-
-with c2:
-    st.subheader("💰 Dividendos Recentes")
-    df_divs = get_latest_dividends(df_best['Ativo'].tolist() if not df_best.empty else [])
-    if not df_divs.empty:
-        df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
-        df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
-        st.dataframe(df_divs, hide_index=True)
-    else: st.info("Sem dividendos recentes.")
-
