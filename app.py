@@ -1,9 +1,9 @@
 import streamlit as st
-import streamlit.components.v1 as components # Necessário para o TradingView
+import streamlit.components.v1 as components 
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Melhores Ações Ibovespa 2025 | Ranking & Setup BB",
+    page_title="Melhores Ações Ibovespa 2025 | Ranking & Setup BB Semanal",
     layout="wide",
     page_icon="🇧🇷"
 )
@@ -125,18 +125,18 @@ def apply_best_filters(df):
     df_filtered.rename(columns={'papel': 'Ativo', 'cotacao': 'Preço', 'pl': 'P/L', 'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'}, inplace=True)
     return df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False]).reset_index(drop=True)
 
-# --- SCANNER BOLLINGER (BRASIL + EUA) ---
+# --- SCANNER BOLLINGER SEMANAL (BRASIL + EUA) ---
 @st.cache_data(ttl=900)
-def scan_bollinger_bands():
-    # 1. Definir Listas de Ativos
+def scan_bollinger_bands_weekly():
+    # 1. Lista Atualizada (Removido tickers antigos, adicionado BHIA3, etc)
     tickers_br = [
         "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA",
         "LREN3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
-        "VBBR3.SA", "ELET3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "VIIA3.SA", "GOLL4.SA",
-        "AZUL4.SA", "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA"
+        "VBBR3.SA", "ELET3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA",
+        "AZUL4.SA", "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA",
+        "TOTS3.SA", "RENT3.SA", "TIMS3.SA", "SBSP3.SA"
     ]
     
-    # Principais ações dos EUA (Sem sufixo .SA para lógica, mas precisamos saber a origem)
     tickers_us = [
         "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "INTC", 
         "DIS", "KO", "PEP", "JPM", "V", "WMT", "PG", "XOM", "CVX", "BA"
@@ -147,31 +147,40 @@ def scan_bollinger_bands():
     candidates = []
     
     try:
-        # Baixa dados (Intervalo Diário '1d' ou Semanal '1wk' conforme sua preferência, vou colocar diário para ser mais dinâmico)
-        data = yf.download(all_tickers, period="6mo", interval="1d", group_by='ticker', progress=False, threads=True)
+        # Baixa dados SEMANAIS ('1wk') do último ano
+        # Isso garante que a "última linha" seja a vela semanal atual em formação ou recém fechada
+        data = yf.download(all_tickers, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
         
         for t in all_tickers:
             try:
                 # Ajuste para pegar o DF correto
                 df_t = data[t].copy() if t in data else pd.DataFrame()
                 
+                # Validações básicas
                 if df_t.empty: continue
+                
+                # Remove semanas sem trade (feriados ou erros)
                 df_t.dropna(subset=['Close'], inplace=True)
-                if len(df_t) < 20: continue
+                
+                # Precisa de histórico para calcular SMA20
+                if len(df_t) < 22: continue
 
-                # === CÁLCULO DAS BANDAS (Replicando o Pine Script) ===
+                # === CÁLCULO DAS BANDAS (Semanal) ===
                 # length = 20, mult = 2.0
                 df_t['SMA20'] = df_t['Close'].rolling(window=20).mean()
                 df_t['STD20'] = df_t['Close'].rolling(window=20).std()
                 df_t['Lower'] = df_t['SMA20'] - (2.0 * df_t['STD20'])
                 
-                # Pega a última vela
+                # Pega a VELA ATUAL (Semana corrente)
                 curr = df_t.iloc[-1]
                 
-                # === LÓGICA DE RASTREIO ===
-                # Price "Touching" Lower: Low <= Lower Band
-                # Usamos tolerância de 1% (1.01) para pegar toques muito próximos
-                if curr['Low'] <= (curr['Lower'] * 1.01):
+                # Verifica se os dados da vela atual são válidos
+                if pd.isna(curr['Lower']) or pd.isna(curr['Low']): continue
+                
+                # === LÓGICA ESTRITA ===
+                # A Mínima da semana (Low) tem que ser MENOR ou IGUAL à Banda Inferior
+                # Sem tolerância de porcentagem extra, para evitar falso positivo.
+                if curr['Low'] <= curr['Lower']:
                     
                     dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
                     
@@ -179,21 +188,21 @@ def scan_bollinger_bands():
                     market_prefix = "BMFBOVESPA" if ".SA" in t else "NASDAQ"
                     clean_ticker = t.replace(".SA", "")
                     
-                    # Correção para algumas US que podem ser NYSE
                     if t in ["DIS", "KO", "PEP", "JPM", "V", "WMT", "PG", "XOM", "CVX", "BA"]:
                         market_prefix = "NYSE"
 
                     candidates.append({
                         'Ativo': clean_ticker,
                         'Mercado': '🇧🇷 Brasil' if ".SA" in t else '🇺🇸 EUA',
-                        'Preço': curr['Close'],
+                        'Preço Atual': curr['Close'],
+                        'Mínima Sem.': curr['Low'],
                         'Banda Inf': curr['Lower'],
-                        'Distância %': dist,
+                        'Distância Fechamento %': dist,
                         'TV_Symbol': f"{market_prefix}:{clean_ticker}"
                     })
             except: continue
             
-        return pd.DataFrame(candidates).sort_values('Distância %')
+        return pd.DataFrame(candidates).sort_values('Distância Fechamento %')
     except:
         return pd.DataFrame()
 
@@ -244,9 +253,8 @@ def get_risk_table(df_original):
     if df_risk.empty: return pd.DataFrame()
     return df_risk[['papel', 'cotacao', 'divbpatr']].rename(columns={'papel':'Ativo', 'cotacao':'Preço', 'divbpatr':'Dív/Patr'}).head(10)
 
-# --- WIDGET TRADINGVIEW CHART (DINÂMICO) ---
+# --- WIDGET TRADINGVIEW CHART (SEMANAL "W") ---
 def show_chart_widget(symbol_tv):
-    # Aqui injetamos o indicador BB visualmente
     html_code = f"""
     <div class="tradingview-widget-container">
       <div id="tradingview_chart"></div>
@@ -257,7 +265,7 @@ def show_chart_widget(symbol_tv):
         "width": "100%",
         "height": 500,
         "symbol": "{symbol_tv}",
-        "interval": "D",
+        "interval": "W", 
         "timezone": "America/Sao_Paulo",
         "theme": "light",
         "style": "1",
@@ -278,19 +286,19 @@ def show_chart_widget(symbol_tv):
 # ==========================================
 # INTERFACE PRINCIPAL
 # ==========================================
-st.title("🇧🇷 Ranking B3 + Setup BB (Global)")
+st.title("🇧🇷 Ranking B3 + Setup BB Semanal")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
 # 1. Carregamento dos Dados
-with st.spinner('Processando Mercado (Ranking Fundamentalista + Scan Técnico)...'):
+with st.spinner('Processando Mercado (Ranking Fundamentalista + Scan Semanal)...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_bands() # <--- SCANNER NOVO
+    df_scan_bb = scan_bollinger_bands_weekly() # <--- SCANNER SEMANAL ATUALIZADO
 
-# --- SISTEMA DE ABAS ---
-tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "🌍 Rastreador Geral", "📉 Setup BB (Brasil & EUA)"])
+# --- SISTEMA DE ABAS (APENAS 2 AGORA) ---
+tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "Estratégia Bandas de Bollinger Semanal (Oportunidades)"])
 
 # === ABA 1: CONTEÚDO ORIGINAL ===
 with tab1:
@@ -339,24 +347,13 @@ with tab1:
             df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
             st.dataframe(df_divs.style.format({"Valor": "R$ {:.4f}"}), hide_index=True)
 
-# === ABA 2: RASTREADOR GERAL (WIDGET PADRÃO) ===
+# === ABA 2: ESTRATÉGIA BB SEMANAL ===
 with tab2:
-    st.subheader("Rastreador de Mercado (Tempo Real)")
-    components.html("""
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js" async>
-      { "width": "100%", "height": 600, "defaultColumn": "overview", "defaultScreen": "general", "market": "brazil", "showToolbar": true, "colorTheme": "light", "locale": "br" }
-      </script>
-    </div>
-    """, height=600)
-
-# === ABA 3: SETUP BB (BRASIL + EUA) ===
-with tab3:
-    st.subheader("📉 Ações Tocando a Banda Inferior (B3 & EUA)")
+    st.subheader("📉 Estratégia: Tocou na Banda Inferior (Semanal)")
     st.markdown("""
-    Lista rastreada automaticamente de ativos onde a **Mínima do Dia** tocou ou furou a **Banda de Bollinger Inferior (20, 2)**.
-    """)
+    Lista rastreada automaticamente onde a **Mínima da Semana (Low)** tocou ou rompeu a **Banda de Bollinger Inferior (20, 2)**.
+    <br><small>*Dados atualizados com intervalo semanal ("1wk").*</small>
+    """, unsafe_allow_html=True)
     
     col_list, col_chart = st.columns([1, 2])
     
@@ -364,30 +361,33 @@ with tab3:
     
     with col_list:
         if not df_scan_bb.empty:
-            st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
+            st.write(f"**{len(df_scan_bb)} Oportunidades:**")
             
             def color_dist(val):
+                # Se fechou abaixo (negativo) -> vermelho, se fechou acima mas tocou -> verde claro
                 color = '#ffcccb' if val < 0 else '#e6fffa'
                 return f'background-color: {color}; color: black'
 
             st.dataframe(
-                df_scan_bb[['Ativo', 'Mercado', 'Preço', 'Banda Inf', 'Distância %']].style.format({
-                    "Preço": "{:.2f}", "Banda Inf": "{:.2f}", "Distância %": "{:.2f}%"
-                }).map(color_dist, subset=['Distância %']),
+                df_scan_bb[['Ativo', 'Mercado', 'Preço Atual', 'Mínima Sem.', 'Banda Inf', 'Distância Fechamento %']].style.format({
+                    "Preço Atual": "{:.2f}", "Mínima Sem.": "{:.2f}", "Banda Inf": "{:.2f}", "Distância Fechamento %": "{:.2f}%"
+                }).map(color_dist, subset=['Distância Fechamento %']),
                 use_container_width=True,
                 hide_index=True
             )
             
             # Seletor
-            sel_ticker = st.selectbox("Selecione para ver Gráfico:", df_scan_bb['Ativo'].tolist())
+            sel_ticker = st.selectbox("Selecione para ver Gráfico Semanal:", df_scan_bb['Ativo'].tolist())
             
             # Pega o símbolo correto para o TV
             if sel_ticker:
-                selected_tv_symbol = df_scan_bb.loc[df_scan_bb['Ativo'] == sel_ticker, 'TV_Symbol'].values[0]
+                val = df_scan_bb.loc[df_scan_bb['Ativo'] == sel_ticker, 'TV_Symbol'].values
+                if len(val) > 0:
+                    selected_tv_symbol = val[0]
                 
         else:
-            st.info("Nenhuma ação tocando a banda inferior hoje.")
+            st.info("Nenhuma ação tocando a banda inferior nesta semana até o momento.")
             
     with col_chart:
-        st.markdown(f"#### Análise: {selected_tv_symbol}")
+        st.markdown(f"#### Gráfico Semanal: {selected_tv_symbol}")
         show_chart_widget(selected_tv_symbol)
