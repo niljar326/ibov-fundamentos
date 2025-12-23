@@ -91,9 +91,27 @@ try:
 except Exception as e:
     total_visitantes = 0 
 
+# --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.header("📊 Estatísticas")
     st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos (não conta F5)")
+    st.divider()
+    
+    # --- ÁREA DE APOIO (NOVA) ---
+    st.markdown("### ☕ Apoie o Projeto")
+    st.markdown(
+        """
+        <div style="text-align: justify; font-size: 13px; margin-bottom: 10px;">
+        Esta ferramenta é gratuita. Se as análises te ajudaram a lucrar ou economizar tempo, considere apoiar com um <b>Pix</b> de qualquer valor para manter o servidor online! 🚀
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    
+    st.markdown("**Chave Pix (Copia e Cola):**")
+    # !!! SUBSTITUA O TEXTO ABAIXO PELA SUA CHAVE REAL !!!
+    st.code("ea69ebd3-1233-4f61-816a-a15e564a9081", language="text") 
+    
     st.divider()
     st.caption("Desenvolvido com Streamlit")
 
@@ -536,8 +554,7 @@ with tab1:
             df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
             df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
             st.dataframe(df_divs, hide_index=True)
-        else:
-            st.info("Sem dividendos recentes.")
+        else: st.info("Sem dividendos recentes.")
 
 # === ABA 2: NOVO SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
 with tab2:
