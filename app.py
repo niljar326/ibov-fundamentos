@@ -1,16 +1,15 @@
 import streamlit as st
-import streamlit.components.v1 as components # Necessário para o gráfico TradingView
+import streamlit.components.v1 as components 
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
+    page_title="Melhores Ações Ibovespa 2025 | Ranking & Setup BB Semanal",
     layout="wide",
     page_icon="🇧🇷"
 )
 
 # --- IMPORTS GERAIS ---
 import pandas as pd
-import plotly.graph_objects as go
 import feedparser
 import yfinance as yf
 import datetime
@@ -45,7 +44,6 @@ st.markdown("""
 def update_visitor_counter():
     file_path = "visitor_counter.json"
     today = datetime.datetime.now().strftime("%Y-%m-%d")
-    
     try:
         if hasattr(st, "query_params"):
             current_params = st.query_params
@@ -53,43 +51,31 @@ def update_visitor_counter():
         else:
             current_params = st.experimental_get_query_params()
             visitor_id = current_params.get("visitor_id", [None])[0]
-    except:
-        visitor_id = None
+    except: visitor_id = None
 
     if not visitor_id:
         visitor_id = str(uuid.uuid4())
-        if hasattr(st, "query_params"):
-            st.query_params["visitor_id"] = visitor_id
+        if hasattr(st, "query_params"): st.query_params["visitor_id"] = visitor_id
         
     data = {"total_visits": 0, "daily_visits": {}}
-
     if os.path.exists(file_path):
         try:
-            with open(file_path, "r") as f:
-                data = json.load(f)
-        except:
-            pass 
+            with open(file_path, "r") as f: data = json.load(f)
+        except: pass 
 
-    if today not in data["daily_visits"]:
-        data["daily_visits"][today] = []
-
+    if today not in data["daily_visits"]: data["daily_visits"][today] = []
     if visitor_id not in data["daily_visits"][today]:
         data["daily_visits"][today].append(visitor_id)
         data["total_visits"] += 1
-        
-        with open(file_path, "w") as f:
-            json.dump(data, f)
-            
+        with open(file_path, "w") as f: json.dump(data, f)
     return data["total_visits"]
 
-try:
-    total_visitantes = update_visitor_counter()
-except Exception as e:
-    total_visitantes = 0 
+try: total_visitantes = update_visitor_counter()
+except: total_visitantes = 0 
 
 with st.sidebar:
     st.header("📊 Estatísticas")
-    st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos (não conta F5)")
+    st.metric(label="Visitantes Únicos", value=total_visitantes)
     st.divider()
     st.caption("Desenvolvido com Streamlit")
 
@@ -109,23 +95,22 @@ def clean_fundamentus_col(x):
 
 def format_short_number(val):
     if pd.isna(val) or val == 0: return ""
-    abs_val = abs(val)
-    if abs_val >= 1e9: return f"{val/1e9:.1f}B"
-    elif abs_val >= 1e6: return f"{val/1e6:.0f}M"
+    if abs(val) >= 1e9: return f"{val/1e9:.1f}B"
+    elif abs(val) >= 1e6: return f"{val/1e6:.0f}M"
     return f"{val:.0f}"
 
 def get_current_data():
     now = datetime.datetime.now()
     return now.strftime("%B"), now.year
 
-# --- Dados Principais ---
+# --- DADOS FUNDAMENTALISTAS ---
 @st.cache_data(ttl=3600*6)
 def get_ranking_data():
     try:
         df = fundamentus.get_resultado()
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
-        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y']
+        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr']
         for col in cols:
             if col in df.columns: df[col] = df[col].apply(clean_fundamentus_col)
             else: df[col] = 0.0
@@ -134,219 +119,103 @@ def get_ranking_data():
 
 def apply_best_filters(df):
     if df.empty: return df
-    filtro = (
-        (df['roe'] > 0.05) & (df['pl'] < 15) & (df['pl'] > 0) & 
-        (df['evebit'] > 0) & (df['evebit'] < 10) &
-        (df['dy'] > 0.04) & (df['mrgliq'] > 0.05) & (df['liq2m'] > 200000)
-    )
+    filtro = ((df['roe'] > 0.05) & (df['pl'] < 15) & (df['pl'] > 0) & (df['dy'] > 0.04) & (df['liq2m'] > 200000))
     df_filtered = df[filtro].copy()
-    df_filtered['dy'] = df_filtered['dy'] * 100
-    df_filtered['mrgliq'] = df_filtered['mrgliq'] * 100
-    df_filtered['roe'] = df_filtered['roe'] * 100
-    df_filtered.rename(columns={
-        'papel': 'Ativo', 'cotacao': 'Preço', 'pl': 'P/L', 
-        'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'
-    }, inplace=True)
+    df_filtered[['dy', 'mrgliq', 'roe']] = df_filtered[['dy', 'mrgliq', 'roe']] * 100
+    df_filtered.rename(columns={'papel': 'Ativo', 'cotacao': 'Preço', 'pl': 'P/L', 'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'}, inplace=True)
     return df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False]).reset_index(drop=True)
 
-# --- SCANNER BOLLINGER SEMANAL ---
+# --- SCANNER BOLLINGER SEMANAL (BRASIL + EUA) ---
 @st.cache_data(ttl=900)
-def scan_setup_weekly():
-    tickers = [
+def scan_bollinger_bands_weekly():
+    tickers_br = [
         "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA",
         "LREN3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
         "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA",
         "AZUL4.SA", "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA",
-        "TOTS3.SA", "RENT3.SA", "TIMS3.SA", "SBSP3.SA"
+        "TOTS3.SA", "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA"
     ]
     
+    tickers_us = [
+        "AAPL", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX", "INTC", 
+        "DIS", "KO", "PEP", "JPM", "V", "WMT", "PG", "XOM", "CVX", "BA"
+    ]
+    
+    all_tickers = tickers_br + tickers_us
+    
     candidates = []
+    
     try:
-        # Baixa dados semanais (2 anos para ter média de 20 segura)
-        data = yf.download(tickers, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
+        # Baixa dados SEMANAIS ('1wk') do último ano
+        data = yf.download(all_tickers, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
         
-        for t in tickers:
+        for t in all_tickers:
             try:
+                # Ajuste para pegar o DF correto
                 df_t = data[t].copy() if t in data else pd.DataFrame()
+                
+                # Validações básicas
                 if df_t.empty: continue
+                
+                # Remove semanas sem trade
                 df_t.dropna(subset=['Close'], inplace=True)
+                
+                # Precisa de histórico para calcular SMA20
                 if len(df_t) < 22: continue
 
-                # Cálculo BB (20, 2)
+                # === CÁLCULO DAS BANDAS (Semanal) ===
+                # length = 20, mult = 2.0
                 df_t['SMA20'] = df_t['Close'].rolling(window=20).mean()
                 df_t['STD20'] = df_t['Close'].rolling(window=20).std()
                 df_t['Lower'] = df_t['SMA20'] - (2.0 * df_t['STD20'])
                 
+                # Pega a VELA ATUAL (Semana corrente)
                 curr = df_t.iloc[-1]
+                
                 if pd.isna(curr['Lower']) or pd.isna(curr['Low']): continue
                 
-                # --- LÓGICA DE OPORTUNIDADE ---
-                tipo_setup = None
+                # Identificar mercado
+                market_prefix = "BMFBOVESPA" if ".SA" in t else "NASDAQ"
+                clean_ticker = t.replace(".SA", "")
+                if t in ["DIS", "KO", "PEP", "JPM", "V", "WMT", "PG", "XOM", "CVX", "BA"]:
+                    market_prefix = "NYSE"
+
+                # === CRITÉRIOS ===
+                setup_detectado = None
                 
                 # 1. Tocou na Banda Inferior (Sobrevenda)
                 if curr['Low'] <= curr['Lower']:
-                    tipo_setup = "Banda Inferior (Sobrevenda)"
+                    setup_detectado = "Banda Inferior"
                 
-                # 2. Tocou na Média Central (SMA20) vindo de cima (Pullback)
-                # Lógica: Mínima tocou na Média, mas a Máxima está acima (significa que o preço está trabalhando ali)
-                elif (curr['Low'] <= curr['SMA20']) and (curr['High'] > curr['SMA20']):
-                    tipo_setup = "Média Central (Pullback)"
-                
-                if tipo_setup:
-                    clean_ticker = t.replace(".SA", "")
+                # 2. Tocou na Média Central (Pullback/Suporte)
+                # Condição: Mínima tocou na média (Low <= SMA20) E Máxima está acima (High >= SMA20)
+                # Isso indica interação com a média
+                elif (curr['Low'] <= curr['SMA20']) and (curr['High'] >= curr['SMA20']):
+                    setup_detectado = "Média Central (Pullback)"
+
+                if setup_detectado:
                     candidates.append({
                         'Ativo': clean_ticker,
-                        'Tipo': tipo_setup,
+                        'Mercado': '🇧🇷' if ".SA" in t else '🇺🇸',
+                        'Setup': setup_detectado,
                         'Preço Atual': curr['Close'],
-                        'Mínima Sem.': curr['Low'],
-                        'Média/Banda': curr['SMA20'] if "Média" in tipo_setup else curr['Lower'],
-                        'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
+                        'Alvo/Suporte': curr['Lower'] if setup_detectado == "Banda Inferior" else curr['SMA20'],
+                        'TV_Symbol': f"{market_prefix}:{clean_ticker}"
                     })
             except: continue
-        return pd.DataFrame(candidates)
-    except: return pd.DataFrame()
-
-# --- Widget TradingView ---
-def show_chart_widget(symbol_tv):
-    html_code = f"""
-    <div class="tradingview-widget-container">
-      <div id="tradingview_chart"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-      <script type="text/javascript">
-      new TradingView.widget(
-      {{
-        "width": "100%", "height": 500, "symbol": "{symbol_tv}", "interval": "W", 
-        "timezone": "America/Sao_Paulo", "theme": "light", "style": "1", "locale": "br",
-        "toolbar_bg": "#f1f3f6", "enable_publishing": false, "allow_symbol_change": true,
-        "studies": ["BB@tv-basicstudies"], "container_id": "tradingview_chart"
-      }});
-      </script>
-    </div>
-    """
-    components.html(html_code, height=500)
-
-# --- Outras Funções (Risco, Chart Plotly, Dividends, News) ---
-@st.cache_data(ttl=3600*12)
-def get_risk_table(df_original):
-    if df_original.empty: return pd.DataFrame()
-    lista_rj = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4', 'RCSL3', 'RCSL4', 'RSID3', 'TCNO3', 'TCNO4']
-    mask_risk = (df_original['divbpatr'] > 3.0) | (df_original['papel'].isin(lista_rj))
-    df_risk = df_original[mask_risk].copy()
-    if df_risk.empty: return pd.DataFrame()
-
-    risk_data = []
-    top_risks = df_risk.sort_values(by='divbpatr', ascending=False).head(15)
-    
-    for idx, row in top_risks.iterrows():
-        ticker = row['papel']
-        status = "Recup. Judicial / Reestruturação" if ticker in lista_rj else "Alta Alavancagem"
-        lucro_queda_str = "N/D"
-        val_queda = 0.0
-        try:
-            stock = yf.Ticker(ticker + ".SA")
-            fin = stock.financials
-            if not fin.empty:
-                inc_row = None
-                possible_names = ['Net Income', 'Net Income Common', 'Net Income Continuous']
-                for name in possible_names:
-                    if name in fin.index:
-                        inc_row = fin.loc[name]
-                        break
-                if inc_row is not None and len(inc_row) >= 2:
-                    curr_profit = inc_row.iloc[0]
-                    prev_profit = inc_row.iloc[1]
-                    if curr_profit < prev_profit:
-                        diff = (curr_profit - prev_profit)
-                        pct = (diff / abs(prev_profit)) * 100
-                        val_queda = pct 
-                        lucro_queda_str = f"{pct:.1f}%"
-                    else: lucro_queda_str = "Subiu/Estável"
-                else: lucro_queda_str = "Sem Hist."
-        except: lucro_queda_str = "Erro dados"
-        if val_queda < 0 or ticker in lista_rj:
-            risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem (Dív/Patr)': row['divbpatr'], 'Queda Lucro (Ano)': lucro_queda_str, 'Situação': status})
-    return pd.DataFrame(risk_data)
-
-@st.cache_data(ttl=3600*24)
-def get_chart_data(ticker):
-    try:
-        stock = yf.Ticker(ticker + ".SA")
-        financials = stock.financials.T
-        quarterly = stock.quarterly_financials.T
-        hist = stock.history(period="5y")
-        if not financials.empty: 
-            financials.index = pd.to_datetime(financials.index).tz_localize(None)
-            financials = financials.sort_index()
-        if not quarterly.empty: 
-            quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
-            quarterly = quarterly.sort_index()
-        if not hist.empty: 
-            hist.index = pd.to_datetime(hist.index).tz_localize(None)
-        
-        def find_col(df, candidates):
-            cols = [c for c in df.columns]
-            for cand in candidates:
-                for col in cols:
-                    if cand.lower() == col.lower() or cand.lower() in col.lower(): return col
-            return None
-        rev_candidates = ['Total Revenue', 'Operating Revenue', 'Revenue', 'Receita Total']
-        inc_candidates = ['Net Income', 'Net Income Common', 'Net Income Continuous', 'Lucro Liquido']
-        if financials.empty: return None
-        rev_col = find_col(financials, rev_candidates)
-        inc_col = find_col(financials, inc_candidates)
-        if not rev_col or not inc_col: return None
-
-        data_rows = []
-        last_3_years = financials.tail(3)
-        for date, row in last_3_years.iterrows():
-            year_str = str(date.year)
-            price = 0.0
-            if not hist.empty:
-                df_yr = hist[hist.index.year == date.year]
-                if not df_yr.empty: price = df_yr['Close'].iloc[-1]
-                else:
-                    mask = hist.index <= date
-                    if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
-            data_rows.append({'Periodo': year_str, 'Receita': row[rev_col], 'Lucro': row[inc_col], 'Cotação': price})
             
-        ttm_rev, ttm_inc, has_ttm = 0, 0, False
-        if not quarterly.empty:
-            q_limit = min(4, len(quarterly))
-            last_q = quarterly.tail(q_limit)
-            q_rev_col = find_col(quarterly, rev_candidates)
-            q_inc_col = find_col(quarterly, inc_candidates)
-            if q_rev_col and q_inc_col:
-                ttm_rev = last_q[q_rev_col].sum()
-                ttm_inc = last_q[q_inc_col].sum()
-                has_ttm = True
-        
-        if has_ttm:
-            curr_price = 0.0
-            if not hist.empty: curr_price = hist['Close'].iloc[-1]
-            data_rows.append({'Periodo': 'Últimos 12m', 'Receita': ttm_rev, 'Lucro': ttm_inc, 'Cotação': curr_price})
-        df_final = pd.DataFrame(data_rows)
-        df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
-        return df_final
-    except: return None
+        return pd.DataFrame(candidates)
+    except:
+        return pd.DataFrame()
 
-@st.cache_data(ttl=3600*6)
-def get_latest_dividends(ticker_list):
-    divs_data = []
-    for ticker in ticker_list[:10]:
-        try:
-            stock = yf.Ticker(ticker + ".SA")
-            d = stock.dividends
-            if not d.empty: divs_data.append({'Ativo': ticker, 'Valor': d.iloc[-1], 'Data': d.index[-1]})
-        except: continue
-    if divs_data:
-        df = pd.DataFrame(divs_data)
-        df['Data'] = pd.to_datetime(df['Data']).dt.tz_localize(None)
-        return df.sort_values('Data', ascending=False).head(5)
-    return pd.DataFrame()
-
+# --- FUNÇÃO DE NOTÍCIAS ---
 @st.cache_data(ttl=1800)
 def get_market_news():
-    feeds = {'Money Times': 'https://www.moneytimes.com.br/feed/', 'InfoMoney': 'https://www.infomoney.com.br/feed/', 'E-Investidor': 'https://einvestidor.estadao.com.br/feed/'}
+    feeds = {
+        'Money Times': 'https://www.moneytimes.com.br/feed/',
+        'InfoMoney': 'https://www.infomoney.com.br/feed/',
+        'E-Investidor': 'https://einvestidor.estadao.com.br/feed/'
+    }
     news_items = []
     for source, url in feeds.items():
         try:
@@ -359,51 +228,108 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
+# --- FUNÇÃO DE DIVIDENDOS ---
+@st.cache_data(ttl=3600*6)
+def get_latest_dividends(ticker_list):
+    divs_data = []
+    for ticker in ticker_list[:10]:
+        try:
+            stock = yf.Ticker(ticker + ".SA")
+            d = stock.dividends
+            if not d.empty:
+                divs_data.append({'Ativo': ticker, 'Valor': d.iloc[-1], 'Data': d.index[-1]})
+        except: continue
+    if divs_data:
+        df = pd.DataFrame(divs_data)
+        df['Data'] = pd.to_datetime(df['Data']).dt.tz_localize(None)
+        return df.sort_values('Data', ascending=False).head(5)
+    return pd.DataFrame()
+
+# --- TABELA DE RISCO ---
+@st.cache_data(ttl=3600*12)
+def get_risk_table(df_original):
+    if df_original.empty: return pd.DataFrame()
+    lista_rj = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4', 'RCSL3', 'RCSL4']
+    mask = (df_original['divbpatr'] > 3.0) | (df_original['papel'].isin(lista_rj))
+    df_risk = df_original[mask].copy()
+    if df_risk.empty: return pd.DataFrame()
+    return df_risk[['papel', 'cotacao', 'divbpatr']].rename(columns={'papel':'Ativo', 'cotacao':'Preço', 'divbpatr':'Dív/Patr'}).head(10)
+
+# --- WIDGET TRADINGVIEW CHART (SEMANAL "W") ---
+def show_chart_widget(symbol_tv):
+    html_code = f"""
+    <div class="tradingview-widget-container">
+      <div id="tradingview_chart"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget(
+      {{
+        "width": "100%",
+        "height": 500,
+        "symbol": "{symbol_tv}",
+        "interval": "W", 
+        "timezone": "America/Sao_Paulo",
+        "theme": "light",
+        "style": "1",
+        "locale": "br",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "allow_symbol_change": true,
+        "studies": [
+          "BB@tv-basicstudies"
+        ],
+        "container_id": "tradingview_chart"
+      }});
+      </script>
+    </div>
+    """
+    components.html(html_code, height=500)
+
 # ==========================================
 # INTERFACE PRINCIPAL
 # ==========================================
-st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
+st.title("🇧🇷 Ranking B3 + Setup BB Semanal")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
-with st.spinner('Processando dados do mercado...'):
+# 1. Carregamento dos Dados
+with st.spinner('Processando Mercado (Ranking Fundamentalista + Scan Semanal)...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_setup_weekly() # Scanner novo
+    df_scan_bb = scan_bollinger_bands_weekly() # <--- SCANNER SEMANAL
 
 # --- SISTEMA DE ABAS ---
-tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Oportunidades)"])
+tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "Estratégia Bandas de Bollinger Semanal (Oportunidades)"])
 
 # === ABA 1: CONTEÚDO ORIGINAL ===
 with tab1:
-    st.markdown("""
-    <div style="text-align: justify; margin-bottom: 20px;">
-    Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades. 
-    Abaixo, você também encontra uma lista de <b>Alerta</b> para empresas em situações delicadas.
-    </div>
-    """, unsafe_allow_html=True)
-
     if not df_best.empty:
         st.subheader("🏆 Melhores Ações (Oportunidades)")
         st.caption("Filtro: P/L Baixo, Alta Rentabilidade e Dividendos.")
         
         cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
         even_cols_subset = ['Preço', 'P/L', 'DY']
-        styler = df_best[cols_view].style.map(lambda x: 'background-color: #f2f2f2; color: black;', subset=even_cols_subset).format({
+        styler = df_best[cols_view].style.map(
+            lambda x: 'background-color: #f2f2f2; color: black;', 
+            subset=even_cols_subset
+        ).format({
             "Preço": "R$ {:.2f}", "EV/EBIT": "{:.2f}", "P/L": "{:.2f}",
             "ROE": "{:.2f}", "DY": "{:.2f}", "Margem Líq.": "{:.2f}"
         })
-        st.dataframe(styler, use_container_width=True, column_config={"Preço": st.column_config.NumberColumn(format="R$ %.2f")}, hide_index=True)
+        st.dataframe(styler, use_container_width=True, hide_index=True)
 
+    # --- BANNERS LADO A LADO ---
     st.divider()
+
     col_ad1, col_ad2 = st.columns(2)
+
     with col_ad1:
         st.markdown("""
         <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
-            <h4 style="margin-top:0; color: #333;">✈️ Nomad: Taxa Zero em Dólar</h4>
-            <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão (até US$ 1.000) para investir nos EUA.</p>
-            <p style="font-size: 14px;">Código: <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
+            <h4 style="margin-top:0; color: #333;">✈️ Para você não dizer que não invisto na nossa amizade 🤩</h4>
+            <p style="font-size: 14px;">Ganhe taxa zero na sua primeira conversão de até US$ 1.000 para começar a investir em dólar com a Nomad.</p>
+            <p style="font-size: 14px;">Use meu código <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
             <div style="text-align:center;">
                 <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
                     ➡️ <b>Abrir Conta Nomad</b>
@@ -416,9 +342,9 @@ with tab1:
     with col_ad2:
         st.markdown("""
         <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
-            <h4 style="margin-top:0; color: #009ee3;">🤝 Mercado Pago: R$ 30 OFF</h4>
+            <h4 style="margin-top:0; color: #009ee3;">🤝 Oi! Ganhe R$ 30 de desconto</h4>
             <p style="font-size: 14px;">Use o app pela primeira vez (pagamento mín. R$ 70) e ganhe <b>R$ 30 de desconto</b>.</p>
-            <p style="font-size: 14px;">Ideal para recargas, contas ou Mercado Livre.</p>
+            <p style="font-size: 14px;">Troque de banco e use Cofrinhos para fazer seu dinheiro render até 120% do CDI.</p>
             <div style="text-align:center;">
                 <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
                     ➡️ <b>Resgatar R$ 30</b>
@@ -430,87 +356,71 @@ with tab1:
 
     st.divider()
 
-    st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
-    st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
+    # Tabela Risco
+    st.subheader("⚠️ Atenção! Empresas em Risco")
     if not df_warning.empty:
-        def color_negative_red(val):
-            if isinstance(val, str) and '-' in val: return 'color: red; font-weight: bold;'
-            return ''
-        styler_risk = df_warning.style.map(color_negative_red, subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "Alavancagem (Dív/Patr)": "{:.2f}"})
-        st.dataframe(styler_risk, use_container_width=True, hide_index=True)
-    else: st.info("Nenhuma ação com os critérios de risco (Dívida Extrema + Queda Lucro) encontrada hoje.")
+        st.dataframe(df_warning.style.format({"Preço": "R$ {:.2f}", "Dív/Patr": "{:.2f}"}), hide_index=True)
 
     st.divider()
-    st.subheader("📈 Análise Visual: Cotação vs Lucro")
-    options = df_best['Ativo'].tolist()
-    idx_default = options.index('LREN3') if 'LREN3' in options else 0
-    with st.expander("🔎 Selecionar Ação para o Gráfico", expanded=st.session_state.expander_open):
-        selected = st.selectbox("Ativo:", options, index=idx_default, on_change=close_expander)
 
-    if selected:
-        with st.spinner(f'Gerando gráfico para {selected}...'):
-            df_chart = get_chart_data(selected)
-        if df_chart is not None and not df_chart.empty:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=df_chart['Periodo'], y=df_chart['Receita'], name="Receita", marker=dict(color='#A9A9A9', line=dict(color='black', width=1)), text=df_chart['Receita_Texto'], textposition='outside', yaxis='y1'))
-            fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Lucro'], name="Lucro Líquido", mode='lines+markers', line=dict(color='#006400', width=3), marker=dict(size=8, color='#006400'), yaxis='y2'))
-            fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='#00008B', width=3), marker=dict(size=8, symbol='diamond', color='#00008B'), yaxis='y3'))
-            fig.update_layout(title=f"{selected}: Receita vs Lucro vs Preço", xaxis=dict(type='category', title="Período"), yaxis=dict(title="Receita", side="left", showgrid=False, title_font=dict(color="gray")), yaxis2=dict(title="Lucro", side="right", overlaying="y", showgrid=False, title_font=dict(color="green")), yaxis3=dict(title="Cotação", side="right", overlaying="y", position=0.95, showgrid=False, showticklabels=False, title_font=dict(color="blue")), legend=dict(orientation="h", y=1.1, x=0), hovermode="x unified", barmode='overlay', height=500)
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.warning(f"Dados históricos indisponíveis para {selected}.")
-
-    st.divider()
+    # Notícias e Dividendos
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("📰 Notícias (Brasília)")
+        st.subheader("📰 Notícias")
         news = get_market_news()
         if news:
-            for n in news: st.markdown(f"**[{n['title']}]({n['link']})**  \n*{n['source']} - {n['date_str']}*")
-        else: st.info("Sem notícias.")
+            for n in news: st.markdown(f"**[{n['title']}]({n['link']})**")
     with c2:
-        st.subheader("💰 Dividendos Recentes")
+        st.subheader("💰 Dividendos")
         df_divs = get_latest_dividends(df_best['Ativo'].tolist() if not df_best.empty else [])
         if not df_divs.empty:
             df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
-            df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
-            st.dataframe(df_divs, hide_index=True)
-        else: st.info("Sem dividendos recentes.")
+            st.dataframe(df_divs.style.format({"Valor": "R$ {:.4f}"}), hide_index=True)
 
-# === ABA 2: NOVA ESTRATÉGIA BB ===
+# === ABA 2: ESTRATÉGIA BB SEMANAL ===
 with tab2:
-    st.subheader("📉 Estratégia Bandas de Bollinger Semanal (Oportunidades)")
+    st.subheader("📉 Estratégia: Tocou na Banda Inferior ou Média (Semanal)")
     st.markdown("""
-    Lista rastreada automaticamente de ações Brasileiras onde:
-    1. A **Mínima da Semana** tocou a **Banda Inferior** (Sobrevenda).
-    2. OU a **Mínima da Semana** tocou a **Média Central** vindo de cima (Pullback).
+    Lista rastreada automaticamente de ações Brasileiras e Americanas onde:
+    1. A **Mínima da Semana** tocou a **Banda Inferior**.
+    2. OU a **Mínima da Semana** tocou a **Média Central** (Basis).
     
     <br><small>*Clique em uma linha da tabela para atualizar o gráfico.*</small>
     """, unsafe_allow_html=True)
     
     col_list, col_chart = st.columns([1, 2])
+    
+    # Símbolo inicial padrão
     selected_tv_symbol = "BMFBOVESPA:PETR4"
     
     with col_list:
         if not df_scan_bb.empty:
             st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
             
-            def color_dist(val):
-                return 'background-color: #e6fffa; color: black'
+            def color_setup(val):
+                if val == "Banda Inferior": return 'background-color: #ffcccb; color: black' # Vermelho
+                return 'background-color: #e6fffa; color: black' # Verde para Média
             
+            # Tabela Interativa
             event = st.dataframe(
-                df_scan_bb[['Ativo', 'Tipo', 'Preço Atual', 'Mínima Sem.', 'Média/Banda']].style.format({
-                    "Preço Atual": "{:.2f}", "Mínima Sem.": "{:.2f}", "Média/Banda": "{:.2f}"
-                }).map(color_dist, subset=['Preço Atual']),
-                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
+                df_scan_bb[['Ativo', 'Mercado', 'Setup', 'Preço Atual', 'Alvo/Suporte']].style.format({
+                    "Preço Atual": "{:.2f}", "Alvo/Suporte": "{:.2f}"
+                }).map(color_setup, subset=['Setup']),
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
             )
             
+            # Atualização do Gráfico
             if len(event.selection.rows) > 0:
                 selected_index = event.selection.rows[0]
                 selected_tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
             elif not df_scan_bb.empty:
                 selected_tv_symbol = df_scan_bb.iloc[0]['TV_Symbol']
+                
         else:
-            st.info("Nenhuma ação no setup (Banda Inferior ou Pullback na Média) nesta semana.")
+            st.info("Nenhuma ação tocando a banda inferior ou média central nesta semana.")
             
     with col_chart:
         clean_name = selected_tv_symbol.split(":")[-1]
