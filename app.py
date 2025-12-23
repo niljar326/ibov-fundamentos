@@ -128,11 +128,11 @@ def apply_best_filters(df):
 # --- SCANNER BOLLINGER SEMANAL (BRASIL + EUA) ---
 @st.cache_data(ttl=900)
 def scan_bollinger_bands_weekly():
-    # 1. Lista Atualizada (Removido tickers antigos, adicionado BHIA3, etc)
+    # 1. Lista Atualizada (Removido ELET3, adicionado BHIA3, etc)
     tickers_br = [
         "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA",
         "LREN3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
-        "VBBR3.SA", "ELET3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA",
+        "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA",
         "AZUL4.SA", "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA",
         "TOTS3.SA", "RENT3.SA", "TIMS3.SA", "SBSP3.SA"
     ]
@@ -148,7 +148,6 @@ def scan_bollinger_bands_weekly():
     
     try:
         # Baixa dados SEMANAIS ('1wk') do último ano
-        # Isso garante que a "última linha" seja a vela semanal atual em formação ou recém fechada
         data = yf.download(all_tickers, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
         
         for t in all_tickers:
@@ -159,7 +158,7 @@ def scan_bollinger_bands_weekly():
                 # Validações básicas
                 if df_t.empty: continue
                 
-                # Remove semanas sem trade (feriados ou erros)
+                # Remove semanas sem trade
                 df_t.dropna(subset=['Close'], inplace=True)
                 
                 # Precisa de histórico para calcular SMA20
@@ -174,13 +173,14 @@ def scan_bollinger_bands_weekly():
                 # Pega a VELA ATUAL (Semana corrente)
                 curr = df_t.iloc[-1]
                 
-                # Verifica se os dados da vela atual são válidos
                 if pd.isna(curr['Lower']) or pd.isna(curr['Low']): continue
                 
-                # === LÓGICA ESTRITA ===
-                # A Mínima da semana (Low) tem que ser MENOR ou IGUAL à Banda Inferior
-                # Sem tolerância de porcentagem extra, para evitar falso positivo.
-                if curr['Low'] <= curr['Lower']:
+                # === LÓGICA COM TOLERÂNCIA DE 5% ===
+                # Se a Mínima for menor que a Banda de baixo + 5%
+                # Ex: Banda = 100. Tolerância vai até 105. Se preço for 104, entra.
+                limite_tolerancia = curr['Lower'] * 1.05
+                
+                if curr['Low'] <= limite_tolerancia:
                     
                     dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
                     
@@ -295,7 +295,7 @@ with st.spinner('Processando Mercado (Ranking Fundamentalista + Scan Semanal)...
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_bands_weekly() # <--- SCANNER SEMANAL ATUALIZADO
+    df_scan_bb = scan_bollinger_bands_weekly() # <--- SCANNER SEMANAL
 
 # --- SISTEMA DE ABAS (APENAS 2 AGORA) ---
 tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "Estratégia Bandas de Bollinger Semanal (Oportunidades)"])
@@ -317,13 +317,41 @@ with tab1:
         })
         st.dataframe(styler, use_container_width=True, hide_index=True)
 
-    # --- BANNERS LADO A LADO ---
+    # --- BANNERS LADO A LADO (DESIGN AMIGÁVEL RESTAURADO) ---
     st.divider()
+
     col_ad1, col_ad2 = st.columns(2)
+
     with col_ad1:
-        st.info("✈️ **Nomad:** Taxa Zero em Dólar. Código: **Y39FP3XF8I**")
+        st.markdown("""
+        <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
+            <h4 style="margin-top:0; color: #333;">✈️ Para você não dizer que não invisto na nossa amizade 🤩</h4>
+            <p style="font-size: 14px;">Ganhe taxa zero na sua primeira conversão de até US$ 1.000 para começar a investir em dólar com a Nomad.</p>
+            <p style="font-size: 14px;">Use meu código <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
+            <div style="text-align:center;">
+                <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
+                    ➡️ <b>Abrir Conta Nomad</b>
+                </a>
+            </div>
+            <p style="font-size: 10px; color: #666; margin-top: 10px; text-align: center;">#GlobalDTVM #NomadFintechInc | <a href="https://www.nomadglobal.com/legal" style="color:#666;">Infos Legais</a></p>
+        </div>
+        """, unsafe_allow_html=True)
+
     with col_ad2:
-        st.info("🤝 **Mercado Pago:** R$ 30 OFF no 1º uso. [Link](https://mpago.li/1VydVhw)")
+        st.markdown("""
+        <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
+            <h4 style="margin-top:0; color: #009ee3;">🤝 Oi! Ganhe R$ 30 de desconto</h4>
+            <p style="font-size: 14px;">Use o app pela primeira vez (pagamento mín. R$ 70) e ganhe <b>R$ 30 de desconto</b>.</p>
+            <p style="font-size: 14px;">Troque de banco e use Cofrinhos para fazer seu dinheiro render até 120% do CDI.</p>
+            <div style="text-align:center;">
+                <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
+                    ➡️ <b>Resgatar R$ 30</b>
+                </a>
+            </div>
+            <p style="font-size: 10px; color: #555; margin-top: 10px; text-align: center;">*Válido por 7 dias para novos usuários.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
     st.divider()
 
     # Tabela Risco
@@ -351,7 +379,7 @@ with tab1:
 with tab2:
     st.subheader("📉 Estratégia: Tocou na Banda Inferior (Semanal)")
     st.markdown("""
-    Lista rastreada automaticamente onde a **Mínima da Semana (Low)** tocou ou rompeu a **Banda de Bollinger Inferior (20, 2)**.
+    Lista rastreada automaticamente onde a **Mínima da Semana (Low)** tocou a **Banda de Bollinger Inferior (20, 2)** ou chegou muito próxima (tolerância de 5%).
     <br><small>*Dados atualizados com intervalo semanal ("1wk").*</small>
     """, unsafe_allow_html=True)
     
