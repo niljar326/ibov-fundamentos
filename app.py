@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components # Import necessário para o gráfico
+import streamlit.components.v1 as components # Import necessário para o gráfico TV
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
 st.set_page_config(
@@ -334,9 +334,9 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL) ---
+# --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL - SÓ LOWER BAND) ---
 @st.cache_data(ttl=900)
-def scan_bollinger_br_weekly():
+def scan_bollinger_br_weekly_lower():
     tickers_br = [
         "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA",
         "LREN3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
@@ -409,15 +409,18 @@ st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
+# --- AVISO LEGAL ---
+st.warning("⚠️ **Aviso Importante:** As informações aqui apresentadas têm caráter meramente informativo e **não constituem recomendação de compra ou venda** de ativos. Ações listadas nos filtros (Setup BB ou Ranking) devem ser analisadas aprofundadamente antes de qualquer decisão de investimento.")
+
 # 1. Carregamento dos Dados
 with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_br_weekly() # Scanner Semanal só BR
+    df_scan_bb = scan_bollinger_br_weekly_lower() # Scanner Semanal só BR Lower
 
 # --- SISTEMA DE ABAS ---
-tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Oportunidades)"])
+tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Lower Band)"])
 
 # === ABA 1: CONTEÚDO ORIGINAL ===
 with tab1:
@@ -514,11 +517,11 @@ with tab1:
             st.dataframe(df_divs, hide_index=True)
         else: st.info("Sem dividendos recentes.")
 
-# === ABA 2: NOVO SCANNER BB (SÓ BRASIL - SEMANAL) ===
+# === ABA 2: NOVO SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
 with tab2:
     st.subheader("📉 Ações Brasileiras na Banda Inferior (Semanal)")
     st.markdown("""
-    Lista rastreada automaticamente de ações da B3 onde a **Mínima da Semana** tocou a **Banda de Bollinger Inferior (20, 2)**.
+    Lista rastreada automaticamente de ações da B3 onde a **Mínima da Semana** tocou ou furou a **Banda de Bollinger Inferior (20, 2)**.
     <br><small>*Clique em uma linha da tabela para atualizar o gráfico.*</small>
     """, unsafe_allow_html=True)
     
