@@ -128,7 +128,6 @@ def apply_best_filters(df):
 # --- SCANNER BOLLINGER SEMANAL (BRASIL + EUA) ---
 @st.cache_data(ttl=900)
 def scan_bollinger_bands_weekly():
-    # 1. Lista Atualizada (Removido ELET3, adicionado BHIA3, etc)
     tickers_br = [
         "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA",
         "LREN3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
@@ -175,12 +174,9 @@ def scan_bollinger_bands_weekly():
                 
                 if pd.isna(curr['Lower']) or pd.isna(curr['Low']): continue
                 
-                # === LÓGICA COM TOLERÂNCIA DE 5% ===
-                # Se a Mínima for menor que a Banda de baixo + 5%
-                # Ex: Banda = 100. Tolerância vai até 105. Se preço for 104, entra.
-                limite_tolerancia = curr['Lower'] * 1.05
-                
-                if curr['Low'] <= limite_tolerancia:
+                # === LÓGICA ESTRITA (SEM TOLERÂNCIA) ===
+                # A Mínima da semana (Low) tem que ser MENOR ou IGUAL à Banda Inferior
+                if curr['Low'] <= curr['Lower']:
                     
                     dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
                     
@@ -297,7 +293,7 @@ with st.spinner('Processando Mercado (Ranking Fundamentalista + Scan Semanal)...
     df_warning = get_risk_table(df_raw)
     df_scan_bb = scan_bollinger_bands_weekly() # <--- SCANNER SEMANAL
 
-# --- SISTEMA DE ABAS (APENAS 2 AGORA) ---
+# --- SISTEMA DE ABAS ---
 tab1, tab2 = st.tabs(["🏆 Ranking Fundamentalista", "Estratégia Bandas de Bollinger Semanal (Oportunidades)"])
 
 # === ABA 1: CONTEÚDO ORIGINAL ===
@@ -317,7 +313,7 @@ with tab1:
         })
         st.dataframe(styler, use_container_width=True, hide_index=True)
 
-    # --- BANNERS LADO A LADO (DESIGN AMIGÁVEL RESTAURADO) ---
+    # --- BANNERS LADO A LADO (DESIGN ORIGINAL) ---
     st.divider()
 
     col_ad1, col_ad2 = st.columns(2)
@@ -379,43 +375,50 @@ with tab1:
 with tab2:
     st.subheader("📉 Estratégia: Tocou na Banda Inferior (Semanal)")
     st.markdown("""
-    Lista rastreada automaticamente onde a **Mínima da Semana (Low)** tocou a **Banda de Bollinger Inferior (20, 2)** ou chegou muito próxima (tolerância de 5%).
-    <br><small>*Dados atualizados com intervalo semanal ("1wk").*</small>
+    Lista rastreada automaticamente onde a **Mínima da Semana (Low)** tocou ou rompeu a **Banda de Bollinger Inferior (20, 2)**.
+    <br><small>*Clique em uma linha da tabela para atualizar o gráfico.*</small>
     """, unsafe_allow_html=True)
     
     col_list, col_chart = st.columns([1, 2])
     
+    # Símbolo inicial padrão
     selected_tv_symbol = "BMFBOVESPA:PETR4"
     
     with col_list:
         if not df_scan_bb.empty:
-            st.write(f"**{len(df_scan_bb)} Oportunidades:**")
+            st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
             
+            # Formatação para tabela
             def color_dist(val):
-                # Se fechou abaixo (negativo) -> vermelho, se fechou acima mas tocou -> verde claro
+                # Vermelho se negativo (furou), Verde claro se positivo (tocou mas fechou acima)
                 color = '#ffcccb' if val < 0 else '#e6fffa'
                 return f'background-color: {color}; color: black'
-
-            st.dataframe(
+            
+            # Tabela Interativa com seleção (on_select="rerun")
+            event = st.dataframe(
                 df_scan_bb[['Ativo', 'Mercado', 'Preço Atual', 'Mínima Sem.', 'Banda Inf', 'Distância Fechamento %']].style.format({
                     "Preço Atual": "{:.2f}", "Mínima Sem.": "{:.2f}", "Banda Inf": "{:.2f}", "Distância Fechamento %": "{:.2f}%"
                 }).map(color_dist, subset=['Distância Fechamento %']),
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
             )
             
-            # Seletor
-            sel_ticker = st.selectbox("Selecione para ver Gráfico Semanal:", df_scan_bb['Ativo'].tolist())
-            
-            # Pega o símbolo correto para o TV
-            if sel_ticker:
-                val = df_scan_bb.loc[df_scan_bb['Ativo'] == sel_ticker, 'TV_Symbol'].values
-                if len(val) > 0:
-                    selected_tv_symbol = val[0]
+            # LÓGICA DE ATUALIZAÇÃO DO GRÁFICO
+            # Se o usuário clicou na tabela, pega o índice da linha selecionada
+            if len(event.selection.rows) > 0:
+                selected_index = event.selection.rows[0]
+                # Pega o símbolo TV da linha selecionada
+                selected_tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
+            elif not df_scan_bb.empty:
+                # Se não clicou, usa o primeiro da lista como padrão
+                selected_tv_symbol = df_scan_bb.iloc[0]['TV_Symbol']
                 
         else:
             st.info("Nenhuma ação tocando a banda inferior nesta semana até o momento.")
             
     with col_chart:
-        st.markdown(f"#### Gráfico Semanal: {selected_tv_symbol}")
+        clean_name = selected_tv_symbol.split(":")[-1]
+        st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(selected_tv_symbol)
