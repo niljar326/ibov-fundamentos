@@ -1,4 +1,4 @@
-mport streamlit as st
+import streamlit as st
 import streamlit.components.v1 as components # Necessário para o TradingView
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
@@ -376,3 +376,4 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
+
