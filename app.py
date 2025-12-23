@@ -38,6 +38,13 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
+    
+    /* Estilo para o botão de Pix */
+    div.stButton > button:first-child {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -97,20 +104,17 @@ with st.sidebar:
     st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos (não conta F5)")
     st.divider()
     
-    # --- ÁREA DE APOIO (NOVA) ---
+    # --- ÁREA DE APOIO (BOTÃO ELEGANTE) ---
     st.markdown("### ☕ Apoie o Projeto")
-    st.markdown(
-        """
-        <div style="text-align: justify; font-size: 13px; margin-bottom: 10px;">
-        Esta ferramenta é gratuita. Se as análises te ajudaram a lucrar ou economizar tempo, considere apoiar com um <b>Pix</b> de qualquer valor para manter o servidor online! 🚀
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
+    st.caption("Ferramenta gratuita. Se te ajudou a lucrar, ajude a manter o servidor online!")
     
-    st.markdown("**Chave Pix (Copia e Cola):**")
-    # !!! SUBSTITUA O TEXTO ABAIXO PELA SUA CHAVE REAL !!!
-    st.code("ea69ebd3-1233-4f61-816a-a15e564a9081", language="text") 
+    # DEFINA SUA CHAVE PIX AQUI
+    chave_pix = "SUA_CHAVE_PIX_AQUI" 
+    
+    # Botão de Ação
+    if st.button("💙 Copiar Chave Pix (Apoio)"):
+        st.code(chave_pix, language="text")
+        st.success("Chave disponível acima! Copie e cole no seu app bancário.")
     
     st.divider()
     st.caption("Desenvolvido com Streamlit")
