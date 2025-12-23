@@ -38,13 +38,6 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
-    
-    /* Estilo para o botão de Pix */
-    div.stButton > button:first-child {
-        width: 100%;
-        border-radius: 8px;
-        font-weight: bold;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -98,24 +91,9 @@ try:
 except Exception as e:
     total_visitantes = 0 
 
-# --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.header("📊 Estatísticas")
     st.metric(label="Visitantes Únicos", value=total_visitantes, help="Visitantes únicos (não conta F5)")
-    st.divider()
-    
-    # --- ÁREA DE APOIO (BOTÃO ELEGANTE) ---
-    st.markdown("### ☕ Apoie o Projeto")
-    st.caption("Ferramenta gratuita. Se te ajudou a lucrar, ajude a manter o servidor online!")
-    
-    # DEFINA SUA CHAVE PIX AQUI
-    chave_pix = "ea69ebd3-1233-4f61-816a-a15e564a9081" 
-    
-    # Botão de Ação
-    if st.button("💙 Copiar Chave Pix (Apoio)"):
-        st.code(chave_pix, language="text")
-        st.success("Chave disponível acima! Copie e cole no seu app bancário.")
-    
     st.divider()
     st.caption("Desenvolvido com Streamlit")
 
@@ -558,7 +536,8 @@ with tab1:
             df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
             df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
             st.dataframe(df_divs, hide_index=True)
-        else: st.info("Sem dividendos recentes.")
+        else:
+            st.info("Sem dividendos recentes.")
 
 # === ABA 2: NOVO SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
 with tab2:
@@ -597,4 +576,3 @@ with tab2:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol)
-
