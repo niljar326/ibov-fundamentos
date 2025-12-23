@@ -109,7 +109,7 @@ with st.sidebar:
     st.caption("Ferramenta gratuita. Se te ajudou a lucrar, ajude a manter o servidor online!")
     
     # DEFINA SUA CHAVE PIX AQUI
-    chave_pix = "SUA_CHAVE_PIX_AQUI" 
+    chave_pix = "ea69ebd3-1233-4f61-816a-a15e564a9081" 
     
     # Botão de Ação
     if st.button("💙 Copiar Chave Pix (Apoio)"):
@@ -597,3 +597,4 @@ with tab2:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol)
+
