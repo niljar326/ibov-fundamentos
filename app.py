@@ -7,7 +7,6 @@ st.set_page_config(
     page_icon="🇧🇷"
 )
 
-
 # --- IMPORTS GERAIS ---
 import pandas as pd
 import plotly.graph_objects as go
@@ -44,21 +43,17 @@ def update_visitor_counter():
     
     # 1. Gerenciamento de ID via URL (Query Params)
     try:
-        # Tenta pegar query params (versão nova do Streamlit)
         if hasattr(st, "query_params"):
             current_params = st.query_params
             visitor_id = current_params.get("visitor_id", None)
         else:
-            # Versão antiga (fallback)
             current_params = st.experimental_get_query_params()
             visitor_id = current_params.get("visitor_id", [None])[0]
     except:
         visitor_id = None
 
-    # Se não tem ID, gera um novo
     if not visitor_id:
         visitor_id = str(uuid.uuid4())
-        # Salva na URL para persistir no F5
         if hasattr(st, "query_params"):
             st.query_params["visitor_id"] = visitor_id
         
@@ -89,7 +84,7 @@ def update_visitor_counter():
 try:
     total_visitantes = update_visitor_counter()
 except Exception as e:
-    total_visitantes = 0 # Fallback silencioso
+    total_visitantes = 0 
 
 with st.sidebar:
     st.header("📊 Estatísticas")
@@ -339,6 +334,21 @@ st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
+# --- BANNER 1: NOMAD (TOPO) ---
+st.markdown("""
+<div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; margin-bottom: 20px; color: #333;">
+    <h4 style="margin-top:0; color: #333;">✈️ Para você não dizer que não invisto na nossa amizade 🤩</h4>
+    <p style="font-size: 15px;">Ganhe <b>taxa zero</b> na sua primeira conversão de até US$ 1.000 para começar a investir em dólar com a <b>Nomad</b>.</p>
+    <p style="font-size: 15px;">Use meu código <code style="background-color: #eee; padding: 4px 8px; border-radius: 4px; font-weight: bold; border: 1px solid #ddd;">Y39FP3XF8I</code> e ganhe taxa zerada na 1ª conversão (em até 15 dias).</p>
+    <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 20px; border-radius: 5px; font-size: 14px; display: inline-block; margin-top: 5px;">
+        ➡️ <b>Abrir conta com Taxa Zero</b>
+    </a>
+    <br><br>
+    <span style="font-size: 11px; color: #666;">#GlobalDTVM #IntermediacaoGlobalDTVM #NomadFintechInc #SECRIA | <a href="https://www.nomadglobal.com/legal" target="_blank" style="color: #666;">Infos Legais</a></span>
+</div>
+""", unsafe_allow_html=True)
+# -----------------------------
+
 st.markdown("""
 <div style="text-align: justify; margin-bottom: 20px;">
 Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades. 
@@ -374,6 +384,24 @@ if not df_best.empty:
         column_config={"Preço": st.column_config.NumberColumn(format="R$ %.2f")},
         hide_index=True
     )
+
+# --- BANNER 2: MERCADO PAGO (MEIO) ---
+st.markdown("""
+<div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 20px; border-radius: 10px; margin: 30px 0; color: #333;">
+    <h4 style="margin-top:0; color: #009ee3;">🤝 Oi! Ganhe R$ 30 de desconto no Mercado Pago</h4>
+    <p style="font-size: 15px;">Use o app pela primeira vez para pagar contas ou recarregar celular/transporte (mínimo R$ 70) e ganhe <b>R$ 30 OFF</b>.</p>
+    <div style="margin-left: 15px; margin-bottom: 15px; font-size: 14px;">
+        <li>Troque de banco e faça seu dinheiro render até <b>120% do CDI</b> (Cofrinhos).</li>
+        <li>Compre no Mercado Livre usando saldo em conta.</li>
+    </div>
+    <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 20px; border-radius: 5px; font-size: 14px; display: inline-block;">
+        ➡️ <b>Baixar App e Resgatar R$ 30</b>
+    </a>
+    <br><br>
+    <span style="font-size: 11px; color: #555;">*Desconto válido por 7 dias para pagamento mínimo de R$ 70.</span>
+</div>
+""", unsafe_allow_html=True)
+# -------------------------------------
 
 # 3. TABELA 2: ATENÇÃO
 st.divider()
@@ -449,7 +477,3 @@ with c2:
         df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
         st.dataframe(df_divs, hide_index=True)
     else: st.info("Sem dividendos recentes.")
-
-
-
-
