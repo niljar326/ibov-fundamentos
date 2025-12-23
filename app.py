@@ -334,21 +334,6 @@ st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
-# --- BANNER 1: NOMAD (TOPO) ---
-st.markdown("""
-<div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; margin-bottom: 20px; color: #333;">
-    <h4 style="margin-top:0; color: #333;">✈️ Para você não dizer que não invisto na nossa amizade 🤩</h4>
-    <p style="font-size: 15px;">Ganhe <b>taxa zero</b> na sua primeira conversão de até US$ 1.000 para começar a investir em dólar com a <b>Nomad</b>.</p>
-    <p style="font-size: 15px;">Use meu código <code style="background-color: #eee; padding: 4px 8px; border-radius: 4px; font-weight: bold; border: 1px solid #ddd;">Y39FP3XF8I</code> e ganhe taxa zerada na 1ª conversão (em até 15 dias).</p>
-    <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 20px; border-radius: 5px; font-size: 14px; display: inline-block; margin-top: 5px;">
-        ➡️ <b>Abrir conta com Taxa Zero</b>
-    </a>
-    <br><br>
-    <span style="font-size: 11px; color: #666;">#GlobalDTVM #IntermediacaoGlobalDTVM #NomadFintechInc #SECRIA | <a href="https://www.nomadglobal.com/legal" target="_blank" style="color: #666;">Infos Legais</a></span>
-</div>
-""", unsafe_allow_html=True)
-# -----------------------------
-
 st.markdown("""
 <div style="text-align: justify; margin-bottom: 20px;">
 Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades. 
@@ -385,26 +370,45 @@ if not df_best.empty:
         hide_index=True
     )
 
-# --- BANNER 2: MERCADO PAGO (MEIO) ---
-st.markdown("""
-<div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 20px; border-radius: 10px; margin: 30px 0; color: #333;">
-    <h4 style="margin-top:0; color: #009ee3;">🤝 Oi! Ganhe R$ 30 de desconto no Mercado Pago</h4>
-    <p style="font-size: 15px;">Use o app pela primeira vez para pagar contas ou recarregar celular/transporte (mínimo R$ 70) e ganhe <b>R$ 30 OFF</b>.</p>
-    <div style="margin-left: 15px; margin-bottom: 15px; font-size: 14px;">
-        <li>Troque de banco e faça seu dinheiro render até <b>120% do CDI</b> (Cofrinhos).</li>
-        <li>Compre no Mercado Livre usando saldo em conta.</li>
+# --- BANNERS LADO A LADO (MEIO) ---
+st.divider()
+
+col_ad1, col_ad2 = st.columns(2)
+
+with col_ad1:
+    st.markdown("""
+    <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
+        <h4 style="margin-top:0; color: #333;">✈️ Nomad: Taxa Zero em Dólar</h4>
+        <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão (até US$ 1.000) para investir nos EUA.</p>
+        <p style="font-size: 14px;">Código: <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
+        <div style="text-align:center;">
+            <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
+                ➡️ <b>Abrir Conta Nomad</b>
+            </a>
+        </div>
+        <p style="font-size: 10px; color: #666; margin-top: 10px; text-align: center;">#GlobalDTVM #NomadFintechInc | <a href="https://www.nomadglobal.com/legal" style="color:#666;">Infos Legais</a></p>
     </div>
-    <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 20px; border-radius: 5px; font-size: 14px; display: inline-block;">
-        ➡️ <b>Baixar App e Resgatar R$ 30</b>
-    </a>
-    <br><br>
-    <span style="font-size: 11px; color: #555;">*Desconto válido por 7 dias para pagamento mínimo de R$ 70.</span>
-</div>
-""", unsafe_allow_html=True)
-# -------------------------------------
+    """, unsafe_allow_html=True)
+
+with col_ad2:
+    st.markdown("""
+    <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
+        <h4 style="margin-top:0; color: #009ee3;">🤝 Mercado Pago: R$ 30 OFF</h4>
+        <p style="font-size: 14px;">Use o app pela primeira vez (pagamento mín. R$ 70) e ganhe <b>R$ 30 de desconto</b>.</p>
+        <p style="font-size: 14px;">Ideal para recargas, contas ou Mercado Livre.</p>
+        <div style="text-align:center;">
+            <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">
+                ➡️ <b>Resgatar R$ 30</b>
+            </a>
+        </div>
+        <p style="font-size: 10px; color: #555; margin-top: 10px; text-align: center;">*Válido por 7 dias para novos usuários.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.divider()
+# -----------------------------------
 
 # 3. TABELA 2: ATENÇÃO
-st.divider()
 st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
 st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
 
