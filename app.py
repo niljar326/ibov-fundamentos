@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components # Import necessário para o gráfico TV
+import streamlit.components.v1 as components # Import necessário para o gráfico TV e Scripts externos
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
 st.set_page_config(
@@ -435,6 +435,16 @@ def show_chart_widget(symbol_tv):
 # ==========================================
 # INTERFACE PRINCIPAL
 # ==========================================
+
+# --- BANNER TOPO (CENTRALIZADO E PEQUENO) ---
+# Inserido antes do título para ficar no topo absoluto da página visual
+components.html("""
+    <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
+        <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
+    </div>
+""", height=90)
+# --------------------------------------------
+
 st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
@@ -590,4 +600,3 @@ with tab2:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol)
-
