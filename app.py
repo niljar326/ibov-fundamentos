@@ -498,13 +498,7 @@ with tab1:
         """, unsafe_allow_html=True)
 
     st.divider()
-    
- # --- INSERÇÃO DO NOVO SCRIPT AQUI ---
-    # Usamos components.html para permitir a execução de JS externo
-    st.write("---") # Um divisor visual antes do anúncio
-    components.html("""
-        <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
-    """, height=250) # Altura definida para o banner ter espaço para aparecer
+
     st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
     st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
     if not df_warning.empty:
