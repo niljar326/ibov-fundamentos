@@ -700,11 +700,13 @@ with tab3:
                 color = '#d4edda' if 'Alta' in val else '#fff3cd'
                 return f'background-color: {color}; color: black; font-weight: bold;'
 
+            # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
             event_roc = st.dataframe(
                 df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
                     "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
                 }).map(color_prob, subset=['Probabilidade']),
-                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
+                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
+                key="roc_table"
             )
             
             # Lógica de atualização ao clicar
@@ -718,5 +720,5 @@ with tab3:
     with col_roc_chart:
         clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
-        # Usa interval="D" (Diário) como solicitado, mesmo que o cálculo das médias tenha sido no semanal
+        # Usa interval="D" (Diário) como solicitado
         show_chart_widget(st.session_state.tv_symbol, interval="D")
