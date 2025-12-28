@@ -1,4 +1,4 @@
-mport streamlit as st
+import streamlit as st
 import streamlit.components.v1 as components # Import necessário para o gráfico TV e Scripts externos
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
@@ -794,4 +794,5 @@ with tab3:
         st.divider()
         if st.button("Bloquear novamente (Reset)", key="lock_btn"):
             st.session_state["aba3_liberada"] = False
+
             st.rerun()
