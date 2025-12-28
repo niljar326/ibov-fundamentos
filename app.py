@@ -1,7 +1,7 @@
 import streamlit as st
-import streamlit.components.v1 as components # Import necessário para o gráfico TV e Scripts externos
+import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
     layout="wide",
@@ -30,83 +30,59 @@ except ImportError:
 # --- CSS Global ---
 st.markdown("""
     <style>
-    /* Cabeçalhos à direita */
     [data-testid="stDataFrame"] table tr th { text-align: right !important; }
-    /* Células à esquerda */
     [data-testid="stDataFrame"] table tr td { text-align: left !important; }
-    /* Ajuste visual das abas */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
-    
-    /* Botão de desbloqueio com destaque */
-    .big-button {
-        font-size: 20px !important;
-        font-weight: bold !important;
-        padding: 20px !important;
-    }
+    .big-button { font-size: 20px !important; font-weight: bold !important; padding: 20px !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNÇÃO DO CONTADOR DE VISITANTES ---
+# --- FUNÇÃO CONTADOR DE VISITANTES ---
 def update_visitor_counter():
     file_path = "visitor_counter.json"
     today = datetime.datetime.now().strftime("%Y-%m-%d")
-    
     try:
         if hasattr(st, "query_params"):
-            current_params = st.query_params
-            visitor_id = current_params.get("visitor_id", None)
+            visitor_id = st.query_params.get("visitor_id", None)
         else:
-            current_params = st.experimental_get_query_params()
-            visitor_id = current_params.get("visitor_id", [None])[0]
-    except:
-        visitor_id = None
-
+            visitor_id = st.experimental_get_query_params().get("visitor_id", [None])[0]
+    except: visitor_id = None
     if not visitor_id:
         visitor_id = str(uuid.uuid4())
-        if hasattr(st, "query_params"):
-            st.query_params["visitor_id"] = visitor_id
-        
+        if hasattr(st, "query_params"): st.query_params["visitor_id"] = visitor_id
     data = {"total_visits": 0, "daily_visits": {}}
-
     if os.path.exists(file_path):
         try:
-            with open(file_path, "r") as f:
-                data = json.load(f)
-        except: pass 
-
-    if today not in data["daily_visits"]:
-        data["daily_visits"][today] = []
-
+            with open(file_path, "r") as f: data = json.load(f)
+        except: pass
+    if today not in data["daily_visits"]: data["daily_visits"][today] = []
     if visitor_id not in data["daily_visits"][today]:
         data["daily_visits"][today].append(visitor_id)
         data["total_visits"] += 1
-        
-        with open(file_path, "w") as f:
-            json.dump(data, f)
-            
+        with open(file_path, "w") as f: json.dump(data, f)
     return data["total_visits"]
 
-try:
-    total_visitantes = update_visitor_counter()
-except:
-    total_visitantes = 0 
+try: total_visitantes = update_visitor_counter()
+except: total_visitantes = 0
 
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.header("📊 Estatísticas")
     st.metric(label="Visitantes Únicos", value=total_visitantes)
-    st.divider()     
+    st.divider()
     st.caption("Desenvolvido com Streamlit")
 
-# --- Estado ---
+# --- ESTADO DA SESSÃO ---
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
+# Estado específico para o bloqueio da Aba 3
+if 'conteudo_roc_liberado' not in st.session_state: st.session_state.conteudo_roc_liberado = False # Começa bloqueado
 
 def close_expander(): st.session_state.expander_open = False
 
-# --- Auxiliares ---
+# --- FUNÇÕES AUXILIARES ---
 def clean_fundamentus_col(x):
     if pd.isna(x) or x == '': return 0.0
     if isinstance(x, (int, float)): return float(x)
@@ -132,7 +108,7 @@ def get_current_data():
     now = datetime.datetime.now()
     return now.strftime("%B"), now.year
 
-# --- Dados Principais ---
+# --- DADOS PRINCIPAIS ---
 @st.cache_data(ttl=3600*6)
 def get_ranking_data():
     try:
@@ -149,7 +125,7 @@ def get_ranking_data():
 def apply_best_filters(df):
     if df.empty: return df
     filtro = (
-        (df['roe'] > 0.05) & (df['pl'] < 15) & (df['pl'] > 0) & 
+        (df['roe'] > 0.05) & (df['pl'] < 15) & (df['pl'] > 0) &
         (df['evebit'] > 0) & (df['evebit'] < 10) &
         (df['dy'] > 0.04) & (df['mrgliq'] > 0.05) & (df['liq2m'] > 200000)
     )
@@ -190,7 +166,7 @@ def get_risk_table(df_original):
                     if curr_profit < prev_profit:
                         diff = (curr_profit - prev_profit)
                         pct = (diff / abs(prev_profit)) * 100
-                        val_queda = pct 
+                        val_queda = pct
                         lucro_queda_str = f"{pct:.1f}%"
                     else: lucro_queda_str = "Subiu/Estável"
                 else: lucro_queda_str = "Sem Hist."
@@ -206,10 +182,10 @@ def get_chart_data(ticker):
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
         hist = stock.history(period="5y")
-        if not financials.empty: 
+        if not financials.empty:
             financials.index = pd.to_datetime(financials.index).tz_localize(None)
             financials = financials.sort_index()
-        if not quarterly.empty: 
+        if not quarterly.empty:
             quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
             quarterly = quarterly.sort_index()
         if not hist.empty: hist.index = pd.to_datetime(hist.index).tz_localize(None)
@@ -351,21 +327,32 @@ def scan_roc_weekly(df_top_liq):
 
 def show_chart_widget(symbol_tv, interval="D"):
     html_code = f"""
-    <div class="tradingview-widget-container"><div id="tradingview_chart"></div><script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script><script type="text/javascript">
-      new TradingView.widget({{"width": "100%","height": 500,"symbol": "{symbol_tv}","interval": "{interval}","timezone": "America/Sao_Paulo","theme": "light","style": "1","locale": "br","toolbar_bg": "#f1f3f6","enable_publishing": false,"allow_symbol_change": true,"studies": ["MASimple@tv-basicstudies", "MASimple@tv-basicstudies","MASimple@tv-basicstudies"], "container_id": "tradingview_chart"}});
-      </script></div>"""
+    <div class="tradingview-widget-container">
+      <div id="tradingview_chart"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget(
+      {{
+        "width": "100%", "height": 500, "symbol": "{symbol_tv}", "interval": "{interval}",
+        "timezone": "America/Sao_Paulo", "theme": "light", "style": "1", "locale": "br",
+        "toolbar_bg": "#f1f3f6", "enable_publishing": false, "allow_symbol_change": true,
+        "studies": ["MASimple@tv-basicstudies", "MASimple@tv-basicstudies", "MASimple@tv-basicstudies"],
+        "container_id": "tradingview_chart"
+      }});
+      </script>
+    </div>"""
     components.html(html_code, height=500)
 
 # ==========================================
 # INTERFACE PRINCIPAL
 # ==========================================
 
+# --- BANNER TOPO ---
 components.html("""<div style="display: flex; justify-content: center; align-items: center; width: 100%;"><script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script></div>""", height=90)
 
 st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
-
 st.warning("⚠️ **AVISO IMPORTANTE:** As informações disponibilizadas nesta página não configuram recomendação de compra ou venda. O mercado financeiro possui riscos. Utilize os dados apenas para estudo e aprofunde sua análise antes de tomar qualquer decisão.")
 
 with st.spinner('Processando dados do mercado...'):
@@ -456,56 +443,49 @@ with tab2:
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: NOVO SCANNER ROC (BLOQUEADA POR PADRÃO) ===
+# === ABA 3: SETUP ROC (BLOQUEIO DE APOIO SOCIAL) ===
 with tab3:
-    # 1. INICIALIZAÇÃO SEGURA DO ESTADO (Começa Bloqueado)
-    if "conteudo_roc_liberado" not in st.session_state:
-        st.session_state["conteudo_roc_liberado"] = False
-
-    # 2. VERIFICAÇÃO DE BLOQUEIO
-    if not st.session_state["conteudo_roc_liberado"]:
-        # TELA DE BLOQUEIO
-        st.markdown("<br><br>", unsafe_allow_html=True)
+    # Verifica se o conteúdo já foi liberado (se o usuário clicou no botão)
+    if not st.session_state.conteudo_roc_liberado:
+        # Se não foi liberado, mostra a tela de bloqueio e o botão
+        st.markdown("<br><br>", unsafe_allow_html=True) # Espaço para centralizar o botão
         col_lock1, col_lock2, col_lock3 = st.columns([1, 2, 1])
-        
+
         with col_lock2:
-            st.error("🔒 **CONTEÚDO EXCLUSIVO BLOQUEADO**")
-            st.write("O acesso ao **Setup ROC (Caiu Comprou)** é restrito.")
-            st.write("Para liberar o acesso e apoiar o desenvolvimento, clique no botão abaixo:")
-            
-            # 3. BOTÃO QUE EXECUTA A LÓGICA
-            # Ao clicar, definimos o state como True e recarregamos a página
-            if st.button("🚀 LIBERAR ACESSO AGORA (CLIQUE AQUI)", type="primary", use_container_width=True):
-                st.session_state["conteudo_roc_liberado"] = True
-                # Injeta JS para abrir a nova aba
-                js = f"<script>window.open('https://multicoloredsister.com/3luWVi', '_blank');</script>"
-                components.html(js, height=0)
-                st.rerun()
-            
-            st.caption("Ao clicar, você será redirecionado e o conteúdo será liberado instantaneamente nesta página.")
+            st.error("🔒 **ACESSO BLOQUEADO AO SETUP ROC**")
+            st.write("Este conteúdo avançado requer um pequeno apoio para o desenvolvimento contínuo.")
+            st.write("**Clique no botão abaixo para ser redirecionado e liberar o acesso:**")
+
+            # Botão que, ao clicar, define o estado como liberado, abre o link e recarrega a página
+            if st.button("🚀 QUERO APOIAR E LIBERAR O SETUP ROC", type="primary", use_container_width=True, help="Ao clicar, você será levado a uma página para apoiar, e o conteúdo será liberado automaticamente aqui!"):
+                st.session_state.conteudo_roc_liberado = True
+                # Injeta um script Javascript para abrir o link em uma nova aba
+                st.components.v1.html(f"<script>window.open('https://multicoloredsister.com/3luWVi', '_blank');</script>", height=0)
+                st.rerun() # Força a recarga da página para mostrar o conteúdo liberado
+
+            st.caption("Após clicar, você será redirecionado. Volte a esta aba que o conteúdo será liberado em seguida.")
 
     else:
-        # 4. CONTEÚDO LIBERADO (Só aparece se o state for True)
+        # Se o conteúdo JÁ FOI liberado (st.session_state.conteudo_roc_liberado é True), mostra o conteúdo
         st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
-        st.success("✅ Acesso Liberado! Obrigado pelo apoio.")
-        
+        st.success("✅ Acesso Liberado! Obrigado pelo seu apoio.")
+
         st.markdown("""
         **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
         *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
         *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17.
         """)
-        
+
         col_roc_list, col_roc_chart = st.columns([1, 2])
 
         with col_roc_list:
             if not df_scan_roc.empty:
                 st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
-                
-                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
+                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3": # Mantém o símbolo padrão se ainda não foi alterado
                     st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
 
                 def color_prob(val):
-                    color = '#d4edda' if 'Alta' in val else '#fff3cd'
+                    color = '#d4edda' if 'Alta' in val else '#fff3cd' # Verde claro para Alta, Amarelo para Média
                     return f'background-color: {color}; color: black; font-weight: bold;'
 
                 event_roc = st.dataframe(
@@ -513,9 +493,8 @@ with tab3:
                         "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
                     }).map(color_prob, subset=['Probabilidade']),
                     use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
-                    key="roc_table"
+                    key="roc_table" # Mantém o estado da tabela entre recarregamentos
                 )
-                
                 if len(event_roc.selection.rows) > 0:
                     idx_roc = event_roc.selection.rows[0]
                     st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
@@ -526,8 +505,9 @@ with tab3:
             clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
             st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
             show_chart_widget(st.session_state.tv_symbol, interval="D")
-            
+
         st.divider()
+        # Botão para rebloquear a aba (opcional, para teste)
         if st.button("🔒 Bloquear acesso novamente", key="lock_btn"):
-            st.session_state["conteudo_roc_liberado"] = False
+            st.session_state.conteudo_roc_liberado = False
             st.rerun()
