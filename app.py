@@ -38,6 +38,14 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
+    
+    /* Botão de Link Grande */
+    a[kind="primary"] {
+        font-size: 20px !important;
+        font-weight: bold !important;
+        padding: 15px !important;
+        text-align: center !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -463,7 +471,11 @@ with tab3:
     if "conteudo_roc_liberado" not in st.session_state:
         st.session_state["conteudo_roc_liberado"] = False
 
-    # Botão de Desbloqueio (Se não estiver liberado)
+    # Função de callback para liberar o acesso ao clicar no link
+    def liberar_acesso_roc():
+        st.session_state["conteudo_roc_liberado"] = True
+
+    # Se NÃO estiver liberado, mostra o botão de Link
     if not st.session_state["conteudo_roc_liberado"]:
         st.markdown("<br><br>", unsafe_allow_html=True)
         col_lock1, col_lock2, col_lock3 = st.columns([1, 2, 1])
@@ -473,18 +485,18 @@ with tab3:
             st.write("Este é um setup avançado de alta probabilidade.")
             st.info("ℹ️ Para acessar este conteúdo gratuitamente, clique no botão abaixo. Você será redirecionado para uma página de publicidade que apoia a manutenção do site.")
             
-            # AO CLICAR NO BOTÃO:
-            # 1. Definimos o estado como True (para liberar o conteúdo)
-            # 2. Injetamos o JS (para abrir a aba)
-            # 3. NÃO fazemos st.rerun() imediatamente, permitindo que o navegador processe o JS e o fluxo do código continue para o bloco 'if liberado' abaixo.
-            if st.button("🔓 CLIQUE AQUI PARA APOIAR E LIBERAR", type="primary", use_container_width=True):
-                st.session_state["conteudo_roc_liberado"] = True
-                # Script JS para abrir em nova aba
-                components.html(f"<script>window.open('{url_anuncio}', '_blank');</script>", height=0)
+            # --- CORREÇÃO AQUI: USANDO ST.LINK_BUTTON COM CALLBACK ---
+            # Isso garante que a aba abre (pois é um link nativo) e o conteúdo libera (pois tem callback)
+            st.link_button(
+                label="🔓 CLIQUE AQUI PARA APOIAR E LIBERAR",
+                url=url_anuncio,
+                type="primary",
+                use_container_width=True,
+                on_click=liberar_acesso_roc # Esta função roda quando clica, liberando a tela
+            )
 
-    # Exibição do Conteúdo (Se estiver liberado)
-    # Nota: Como alteramos o session_state acima, este bloco será executado na mesma passagem do script.
-    if st.session_state["conteudo_roc_liberado"]:
+    # Se estiver liberado (Else), mostra o conteúdo
+    else:
         st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
         st.success("✅ Acesso Liberado! Obrigado pelo seu apoio ao site.")
         
@@ -527,6 +539,7 @@ with tab3:
             show_chart_widget(st.session_state.tv_symbol, interval="D")
             
         st.divider()
+        # Botão para resetar (Bloquear de novo)
         if st.button("🔒 Bloquear acesso novamente", key="lock_btn"):
             st.session_state["conteudo_roc_liberado"] = False
             st.rerun()
