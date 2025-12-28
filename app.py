@@ -418,7 +418,7 @@ def scan_roc_weekly(df_top_liq):
     candidates = []
     
     try:
-        # Baixa dados SEMANAIS ('1wk') dos últimos 6 anos (precisa de 305 periodos para ema4)
+        # Baixa dados SEMANAIS ('1wk') dos últimos 7 anos (precisa de 305 periodos para ema4 + folga)
         data = yf.download(tickers_sa, period="7y", interval="1wk", group_by='ticker', progress=False, threads=True)
         
         for t in tickers_sa:
@@ -428,7 +428,7 @@ def scan_roc_weekly(df_top_liq):
                 if df_t.empty: continue
                 
                 df_t.dropna(subset=['Close'], inplace=True)
-                # Verifica histórico suficiente para EMA 305 (305 semanas)
+                # Verifica histórico suficiente para EMA 305 (310 semanas)
                 if len(df_t) < 310: continue
 
                 # Cálculo das EMAS
@@ -460,9 +460,6 @@ def scan_roc_weekly(df_top_liq):
                 )
                 
                 # 2. EMA1 Negativa, EMA2 Maior que EMA1 (mesmo que negativa), resto Positiva -> "Média"
-                # A condição "ema2 maior que ema1" matematicamente é roc34 > roc17.
-                # Se roc34 for positivo, cai na regra acima (se o resto for positivo).
-                # Se roc34 for negativo, cai nesta regra se for maior que roc17.
                 cond_media = (
                     (curr['ROC17'] < 0) &
                     (curr['ROC34'] < 0) &
@@ -483,8 +480,6 @@ def scan_roc_weekly(df_top_liq):
                         'Preço': curr['Close'],
                         'Probabilidade': probabilidade,
                         'ROC17 %': curr['ROC17'],
-                        'ROC34 %': curr['ROC34'],
-                        'ROC305 %': curr['ROC305'],
                         'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
                     })
 
@@ -495,8 +490,8 @@ def scan_roc_weekly(df_top_liq):
     except: return pd.DataFrame()
 
 # --- WIDGET CHART TRADINGVIEW ---
-def show_chart_widget(symbol_tv):
-    # Widget configurado para Semanal ("W") com o Estudo "BB@tv-basicstudies" (Bollinger Bands)
+def show_chart_widget(symbol_tv, interval="D"):
+    # Widget configurado dinamicamente. interval="W" (Semanal) ou "D" (Diario).
     html_code = f"""
     <div class="tradingview-widget-container">
       <div id="tradingview_chart"></div>
@@ -507,7 +502,7 @@ def show_chart_widget(symbol_tv):
         "width": "100%",
         "height": 500,
         "symbol": "{symbol_tv}",
-        "interval": "W", 
+        "interval": "{interval}", 
         "timezone": "America/Sao_Paulo",
         "theme": "light",
         "style": "1",
@@ -663,6 +658,7 @@ with tab2:
     with col_list:
         if not df_scan_bb.empty:
             st.write(f"**{len(df_scan_bb)} Oportunidades:**")
+            # Usa interval="W"
             event = st.dataframe(
                 df_scan_bb[['Ativo', 'Preço Atual', 'Distância Fech %']].style.format({
                     "Preço Atual": "{:.2f}", "Distância Fech %": "{:.2f}%"
@@ -678,7 +674,7 @@ with tab2:
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
-        show_chart_widget(st.session_state.tv_symbol)
+        show_chart_widget(st.session_state.tv_symbol, interval="W")
 
 # === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) ===
 with tab3:
@@ -695,28 +691,34 @@ with tab3:
         if not df_scan_roc.empty:
             st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
             
+            # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
+            if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
+                st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
+
             # Formatação condicional da coluna Probabilidade
             def color_prob(val):
                 color = '#d4edda' if 'Alta' in val else '#fff3cd'
                 return f'background-color: {color}; color: black; font-weight: bold;'
 
+            # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
             event_roc = st.dataframe(
                 df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
                     "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
                 }).map(color_prob, subset=['Probabilidade']),
-                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
+                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
+                key="roc_table"
             )
             
+            # Lógica de atualização ao clicar
             if len(event_roc.selection.rows) > 0:
                 idx_roc = event_roc.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
-            elif st.session_state.tv_symbol == "BMFBOVESPA:LREN3" and not df_scan_roc.empty:
-                 pass
+            
         else:
             st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
 
     with col_roc_chart:
         clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
-        st.markdown(f"#### Gráfico Semanal: {clean_name_roc}")
-        # Reutiliza o widget chart (o estudo aplicado será padrão, pois o widget não aceita input dinâmico de script pine complexo via URL simples, mas mostrará o ativo)
-        show_chart_widget(st.session_state.tv_symbol)
+        st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
+        # Usa interval="D" (Diário) como solicitado
+        show_chart_widget(st.session_state.tv_symbol, interval="D")
