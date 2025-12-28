@@ -150,6 +150,7 @@ def apply_best_filters(df):
     }, inplace=True)
     return df_filtered.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False]).reset_index(drop=True)
 
+# --- CORREÇÃO DO ERRO AQUI: NOMES DAS COLUNAS ---
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
     if df_original.empty: return pd.DataFrame()
@@ -170,27 +171,34 @@ def get_risk_table(df_original):
             stock = yf.Ticker(ticker + ".SA")
             fin = stock.financials
             if not fin.empty:
+                # Tenta pegar a linha de lucro
+                inc_row = None
                 for name in ['Net Income', 'Net Income Common', 'Lucro Liquido']:
                     if name in fin.index:
                         inc_row = fin.loc[name]
-                        if len(inc_row) >= 2:
-                            curr, prev = inc_row.iloc[0], inc_row.iloc[1]
-                            if curr < prev:
-                                pct = ((curr - prev) / abs(prev)) * 100
-                                val_queda = pct 
-                                lucro_queda_str = f"{pct:.1f}%"
-                            else: lucro_queda_str = "Estável/Subiu"
                         break
+                
+                if inc_row is not None and len(inc_row) >= 2:
+                    curr, prev = inc_row.iloc[0], inc_row.iloc[1]
+                    if curr < prev:
+                        pct = ((curr - prev) / abs(prev)) * 100
+                        val_queda = pct 
+                        lucro_queda_str = f"{pct:.1f}%"
+                    else: lucro_queda_str = "Estável/Subiu"
         except: pass
         
         if val_queda < 0 or ticker in lista_rj:
             risk_data.append({
-                'Ativo': ticker, 'Preço': row['cotacao'], 
-                'Alavancagem': row['divbpatr'], 'Queda Lucro': lucro_queda_str, 'Situação': status
+                'Ativo': ticker,
+                'Preço': row['cotacao'],
+                # CORREÇÃO: Nomes exatos que o st.dataframe espera
+                'Alavancagem (Dív/Patr)': row['divbpatr'], 
+                'Queda Lucro (Ano)': lucro_queda_str, 
+                'Situação': status
             })
     return pd.DataFrame(risk_data)
 
-# --- LÓGICA DO GRÁFICO (3 ANOS + TTM) ---
+# --- LÓGICA DO GRÁFICO ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
@@ -201,7 +209,6 @@ def get_chart_data(ticker):
         
         if fin.empty or quat.empty: return None
 
-        # Ordenar colunas cronologicamente
         fin = fin[fin.columns[::-1]] 
         
         def find_row(df, possible_names):
@@ -216,7 +223,7 @@ def get_chart_data(ticker):
 
         data_rows = []
 
-        # 1. 3 ANOS ANTERIORES
+        # 3 ÚLTIMOS ANOS FECHADOS
         last_3_years = fin.columns[-3:] 
         
         for col_date in last_3_years:
@@ -234,7 +241,7 @@ def get_chart_data(ticker):
                 'Cotação': price
             })
 
-        # 2. TTM (Ano Atual/Corrente)
+        # TTM (12 Meses)
         last_4_q = quat.iloc[:, :4]
         ttm_rev = last_4_q.loc[rev_name].sum()
         ttm_inc = last_4_q.loc[inc_name].sum()
@@ -281,7 +288,7 @@ def get_market_news():
         except: continue
     return items[:6]
 
-# --- SCANNER ROC EMA (SETUP ROC) ---
+# --- SCANNER ROC EMA ---
 @st.cache_data(ttl=3600*4)
 def scan_roc_weekly(df_top_liq):
     if df_top_liq.empty: return pd.DataFrame()
@@ -305,6 +312,7 @@ def scan_roc_weekly(df_top_liq):
                 
                 curr = df_t.iloc[-1]
                 
+                # Lógica ROC
                 is_uptrend = (curr['Close'] > curr['EMA72']) and (curr['Close'] > curr['EMA305'])
                 is_pullback = (curr['Close'] < curr['EMA17'])
                 
@@ -369,6 +377,7 @@ with tab1:
         st.subheader("🏆 Melhores Ações (Oportunidades)")
         st.caption("Filtro: P/L Baixo, Alta Rentabilidade e Dividendos.")
         
+        # Visual original
         cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
         styler = df_best[cols_view].style.map(lambda x: 'background-color: #f2f2f2; color: black;', subset=['Preço', 'P/L', 'DY']).format({
             "Preço": "R$ {:.2f}", "EV/EBIT": "{:.2f}", "P/L": "{:.2f}", "ROE": "{:.2f}", "DY": "{:.2f}", "Margem Líq.": "{:.2f}"
@@ -385,6 +394,7 @@ with tab1:
     st.divider()
     st.subheader("⚠️ Atenção! Empresas em Risco")
     if not df_warning.empty:
+        # AQUI ESTAVA O ERRO, AGORA CORRIGIDO POIS AS COLUNAS EXISTEM
         st.dataframe(df_warning.style.map(lambda v: 'color: red; font-weight: bold;' if isinstance(v,str) and '-' in v else '', subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "Alavancagem (Dív/Patr)": "{:.2f}"}), use_container_width=True, hide_index=True)
     
     st.divider()
