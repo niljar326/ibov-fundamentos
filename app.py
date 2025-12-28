@@ -1,5 +1,14 @@
 import streamlit as st
-import streamlit.components.v1 as components
+import streamlit.components.v1 as components # Import necessário para o gráfico TV e Scripts externos
+
+# --- 1. CONFIGURAÇÃO DA PÁGINA (DEVE SER A PRIMEIRA COISA) ---
+st.set_page_config(
+    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
+    layout="wide",
+    page_icon="🇧🇷"
+)
+
+# --- IMPORTS GERAIS ---
 import pandas as pd
 import plotly.graph_objects as go
 import feedparser
@@ -11,14 +20,7 @@ import json
 import os
 import uuid
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
-    layout="wide",
-    page_icon="🇧🇷"
-)
-
-# --- IMPORTS GERAIS E DEPENDÊNCIAS ---
+# Tenta importar fundamentus
 try:
     import fundamentus
 except ImportError:
@@ -28,12 +30,14 @@ except ImportError:
 # --- CSS Global ---
 st.markdown("""
     <style>
+    /* Cabeçalhos à direita */
     [data-testid="stDataFrame"] table tr th { text-align: right !important; }
+    /* Células à esquerda */
     [data-testid="stDataFrame"] table tr td { text-align: left !important; }
+    /* Ajuste visual das abas */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
-    .big-button { font-size: 20px !important; font-weight: bold !important; padding: 20px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -44,10 +48,13 @@ def update_visitor_counter():
     
     try:
         if hasattr(st, "query_params"):
-            visitor_id = st.query_params.get("visitor_id", None)
+            current_params = st.query_params
+            visitor_id = current_params.get("visitor_id", None)
         else:
-            visitor_id = st.experimental_get_query_params().get("visitor_id", [None])[0]
-    except: visitor_id = None
+            current_params = st.experimental_get_query_params()
+            visitor_id = current_params.get("visitor_id", [None])[0]
+    except:
+        visitor_id = None
 
     if not visitor_id:
         visitor_id = str(uuid.uuid4())
@@ -55,23 +62,29 @@ def update_visitor_counter():
             st.query_params["visitor_id"] = visitor_id
         
     data = {"total_visits": 0, "daily_visits": {}}
+
     if os.path.exists(file_path):
         try:
             with open(file_path, "r") as f:
                 data = json.load(f)
         except: pass 
+
     if today not in data["daily_visits"]:
         data["daily_visits"][today] = []
+
     if visitor_id not in data["daily_visits"][today]:
         data["daily_visits"][today].append(visitor_id)
         data["total_visits"] += 1
+        
         with open(file_path, "w") as f:
             json.dump(data, f)
+            
     return data["total_visits"]
 
 try:
     total_visitantes = update_visitor_counter()
-except: total_visitantes = 0 
+except:
+    total_visitantes = 0 
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -80,18 +93,13 @@ with st.sidebar:
     st.divider()     
     st.caption("Desenvolvido com Streamlit")
 
-# --- Estado da Aplicação ---
+# --- Estado ---
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
 
-# --- Estado Específico para a Aba 3 (Conteúdo ROC) ---
-# Inicializa como bloqueado se não existir na sessão
-if "roc_content_unlocked" not in st.session_state:
-    st.session_state["roc_content_unlocked"] = False
-
 def close_expander(): st.session_state.expander_open = False
 
-# --- Funções Auxiliares ---
+# --- Auxiliares ---
 def clean_fundamentus_col(x):
     if pd.isna(x) or x == '': return 0.0
     if isinstance(x, (int, float)): return float(x)
@@ -117,7 +125,7 @@ def get_current_data():
     now = datetime.datetime.now()
     return now.strftime("%B"), now.year
 
-# --- CARREGA DADOS FUNDAMENTALISTAS ---
+# --- Dados Principais ---
 @st.cache_data(ttl=3600*6)
 def get_ranking_data():
     try:
@@ -129,11 +137,8 @@ def get_ranking_data():
             if col in df.columns: df[col] = df[col].apply(clean_fundamentus_col)
             else: df[col] = 0.0
         return df
-    except Exception as e:
-        st.error(f"Erro ao carregar dados do fundamentus: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# --- FILTROS E TABELAS DERIVADAS ---
 def apply_best_filters(df):
     if df.empty: return df
     filtro = (
@@ -187,7 +192,6 @@ def get_risk_table(df_original):
             risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem (Dív/Patr)': row['divbpatr'], 'Queda Lucro (Ano)': lucro_queda_str, 'Situação': status})
     return pd.DataFrame(risk_data)
 
-# --- FUNÇÃO PARA GERAR GRÁFICO DE FATURAMENTO/LUCRO ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
@@ -243,11 +247,8 @@ def get_chart_data(ticker):
         df_final = pd.DataFrame(data_rows)
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
         return df_final
-    except Exception as e:
-        st.error(f"Erro ao gerar gráfico para {ticker}: {e}")
-        return None
+    except: return None
 
-# --- FUNÇÃO PARA BUSCAR DIVIDENDOS RECENTES ---
 @st.cache_data(ttl=3600*6)
 def get_latest_dividends(ticker_list):
     divs_data = []
@@ -263,7 +264,6 @@ def get_latest_dividends(ticker_list):
         return df.sort_values('Data', ascending=False).head(5)
     return pd.DataFrame()
 
-# --- FUNÇÃO PARA BUSCAR NOTÍCIAS DE MERCADO ---
 @st.cache_data(ttl=1800)
 def get_market_news():
     feeds = {'Money Times': 'https://www.moneytimes.com.br/feed/', 'InfoMoney': 'https://www.infomoney.com.br/feed/', 'E-Investidor': 'https://einvestidor.estadao.com.br/feed/'}
@@ -283,7 +283,6 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- SCANNER BOLLINGER SEMANAL (LOWER BAND) ---
 @st.cache_data(ttl=600)
 def scan_bollinger_weekly():
     tickers_br = ["VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", "MGLU3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA", "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA", "AZUL4.SA", "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA", "TOTS3.SA", "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA", "ABEV3.SA", "ASAI3.SA", "CRFB3.SA", "MULT3.SA", "CYRE3.SA", "EZTC3.SA", "MRVE3.SA", "PETZ3.SA", "SOMA3.SA", "ALPA4.SA", "LREN3.SA"]
@@ -306,11 +305,8 @@ def scan_bollinger_weekly():
                     candidates.append({'Ativo': clean_ticker, 'Preço Atual': curr['Close'], 'Mínima Sem.': curr['Low'], 'Banda Inf': curr['Lower'], 'Distância Fech %': dist, 'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"})
             except: continue
         return pd.DataFrame(candidates)
-    except Exception as e:
-        st.error(f"Erro no scanner Bollinger: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# --- SCANNER ROC EMA (SETUP CAIU COMPROU) ---
 @st.cache_data(ttl=3600*4)
 def scan_roc_weekly(df_top_liq):
     if df_top_liq.empty: return pd.DataFrame()
@@ -344,11 +340,8 @@ def scan_roc_weekly(df_top_liq):
                     candidates.append({'Ativo': clean_ticker, 'Preço': curr['Close'], 'Probabilidade': probabilidade, 'ROC17 %': curr['ROC17'], 'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"})
             except: continue
         return pd.DataFrame(candidates)
-    except Exception as e:
-        st.error(f"Erro no scanner ROC: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# --- WIDGET CHART TRADINGVIEW ---
 def show_chart_widget(symbol_tv, interval="D"):
     html_code = f"""
     <div class="tradingview-widget-container"><div id="tradingview_chart"></div><script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script><script type="text/javascript">
@@ -360,7 +353,6 @@ def show_chart_widget(symbol_tv, interval="D"):
 # INTERFACE PRINCIPAL
 # ==========================================
 
-# --- BANNER TOPO ---
 components.html("""<div style="display: flex; justify-content: center; align-items: center; width: 100%;"><script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script></div>""", height=90)
 
 st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
@@ -457,41 +449,42 @@ with tab2:
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: SETUP ROC (BLOQUEADO POR PADRÃO ATÉ CLICAR NO LINK) ===
+# === ABA 3: NOVO SCANNER ROC (BLOQUEADA POR PADRÃO) ===
 with tab3:
-    # --- LÓGICA DE BLOQUEIO/DESBLOQUEIO DA ABA 3 ---
-    # Esta é a lógica principal para garantir que o conteúdo só apareça após o clique no link.
-    # Se a sessão "roc_content_unlocked" for False, mostramos a tela de bloqueio.
-    # Se for True, mostramos o conteúdo.
-    
-    if not st.session_state["roc_content_unlocked"]:
+    # 1. LINK DE PROPAGANDA DEFINIDO AQUI
+    url_anuncio = "https://www.effectivegatecpm.com/cem06mi8m?key=43a0b19ca2224de6776045a258cdf621"
+
+    # 2. INICIALIZAÇÃO SEGURA DO ESTADO (Começa Bloqueado)
+    if "conteudo_roc_liberado" not in st.session_state:
+        st.session_state["conteudo_roc_liberado"] = False
+
+    # 3. LÓGICA DE EXIBIÇÃO
+    if not st.session_state["conteudo_roc_liberado"]:
         # TELA DE BLOQUEIO
         st.markdown("<br><br>", unsafe_allow_html=True)
         col_lock1, col_lock2, col_lock3 = st.columns([1, 2, 1])
         
         with col_lock2:
             st.error("🔒 **CONTEÚDO EXCLUSIVO BLOQUEADO**")
-            st.write("O acesso ao **Setup ROC (Caiu Comprou)** é restrito.")
-            st.write("Para liberar o acesso e apoiar o desenvolvimento, clique no botão abaixo. Você será redirecionado para a página de apoio e o conteúdo será liberado automaticamente.")
+            st.write("Este é um setup avançado de alta probabilidade.")
+            st.info("ℹ️ Para acessar este conteúdo gratuitamente, solicitamos que você **clique no botão abaixo**. Você será redirecionado para uma página de publicidade de nossos parceiros que ajuda na manutenção dos custos do site.")
             
-            # BOTÃO QUE ATIVA O DESBLOQUEIO E ABRE O LINK
-            # Ao clicar:
-            # 1. Define st.session_state["roc_content_unlocked"] como True.
-            # 2. Executa um pequeno script JS para abrir o link em uma nova aba.
-            # 3. Recarrega a página (st.rerun()) para que a condição if/else seja reavaliada.
-            if st.button("🚀 LIBERAR ACESSO E APOIAR AGORA", type="primary", use_container_width=True):
-                st.session_state["roc_content_unlocked"] = True
-                # Injeta o script JS para abrir o link em uma nova aba
-                js = f"<script>window.open('https://multicoloredsister.com/3luWVi', '_blank');</script>"
+            # BOTÃO DE AÇÃO
+            if st.button("🔓 CLIQUE AQUI PARA APOIAR E LIBERAR", type="primary", use_container_width=True):
+                # 1. Injeta o JS para abrir a nova aba ANTES de mudar o estado visualmente
+                js = f"<script>window.open('{url_anuncio}', '_blank');</script>"
                 components.html(js, height=0)
-                st.rerun() # Recarrega a página para que a aba seja exibida
-            
-            st.caption("Após clicar, você será redirecionado e o conteúdo desta aba será liberado.")
+                
+                # 2. Muda o estado para liberado
+                st.session_state["conteudo_roc_liberado"] = True
+                
+                # 3. Recarrega a página para remover o bloqueio
+                st.rerun()
 
     else:
-        # CONTEÚDO LIBERADO (Aparece APENAS se st.session_state["roc_content_unlocked"] for True)
+        # 4. CONTEÚDO LIBERADO
         st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
-        st.success("✅ Acesso Liberado! Obrigado pelo seu apoio.")
+        st.success("✅ Acesso Liberado! Obrigado pelo seu apoio ao site.")
         
         st.markdown("""
         **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
@@ -505,15 +498,13 @@ with tab3:
             if not df_scan_roc.empty:
                 st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
                 
-                # Seleciona o primeiro item por padrão se o símbolo atual for o padrão inicial
-                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3" and not df_scan_roc.empty:
+                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
                     st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
 
                 def color_prob(val):
                     color = '#d4edda' if 'Alta' in val else '#fff3cd'
                     return f'background-color: {color}; color: black; font-weight: bold;'
 
-                # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
                 event_roc = st.dataframe(
                     df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
                         "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
@@ -534,7 +525,6 @@ with tab3:
             show_chart_widget(st.session_state.tv_symbol, interval="D")
             
         st.divider()
-        # Botão para rebloquear o conteúdo, se o usuário desejar
         if st.button("🔒 Bloquear acesso novamente", key="lock_btn"):
-            st.session_state["roc_content_unlocked"] = False
+            st.session_state["conteudo_roc_liberado"] = False
             st.rerun()
