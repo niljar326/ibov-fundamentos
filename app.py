@@ -39,7 +39,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
     
-    /* Estilo para o botão de Pix */
+    /* Estilo para o botão de Pix/Desbloqueio */
     div.stButton > button:first-child {
         width: 100%;
         border-radius: 8px;
@@ -384,17 +384,28 @@ def scan_bollinger_weekly():
                 # Pega a vela ATUAL (Semana corrente)
                 curr = df_t.iloc[-1]
 
-                # CRITÉRIO: Mínima da semana tocou ou furou a Banda Inferior
-                if curr['Low'] <= curr['Lower']:
+                # CRITÉRIO: "Tocou a banda inferior SEM FURÁ-LA"
+                # 1. Não furou: A mínima (Low) é MAIOR ou IGUAL à banda inferior (Lower).
+                # 2. Tocou: A mínima (Low) chegou muito perto. (Usando 1.5% de tolerância acima da banda).
+                
+                low_price = curr['Low']
+                lower_band = curr['Lower']
+                tolerancia = 1.015 # 1.5%
+
+                nao_furou = low_price >= lower_band
+                tocou = low_price <= (lower_band * tolerancia)
+
+                if nao_furou and tocou:
                     clean_ticker = t.replace(".SA", "")
 
-                    dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
+                    # Distância positiva pois está acima da banda
+                    dist = ((curr['Close'] - lower_band) / lower_band) * 100
 
                     candidates.append({
                         'Ativo': clean_ticker,
                         'Preço Atual': curr['Close'],
-                        'Mínima Sem.': curr['Low'],
-                        'Banda Inf': curr['Lower'],
+                        'Mínima Sem.': low_price,
+                        'Banda Inf': lower_band,
                         'Distância Fech %': dist,
                         'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
                     })
@@ -648,10 +659,11 @@ with tab1:
         else:
             st.info("Sem dividendos recentes.")
 
-# === ABA 2: SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
+# === ABA 2: SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER - SEM FURAR) ===
 with tab2:
-    st.subheader("📉 Setup: Bandas de Bollinger Semanal (Lower Band)")
-    st.warning("⚠️ **Atenção:** Este filtro mostra ações tocando a banda inferior. Considere o fato de que ações em forte tendência de baixa podem continuar caindo.")
+    st.subheader("📉 Setup: Bandas de Bollinger Semanal")
+    st.markdown("**Critério:** Preço Mínimo (Low) tocou na Banda Inferior (Margem 1.5%) mas **NÃO furou** (Low >= Banda Inferior).")
+    st.warning("⚠️ **Atenção:** Este padrão sugere um respeito ao suporte da banda, mas confirme com outros indicadores.")
 
     col_list, col_chart = st.columns([1, 2])
 
@@ -662,100 +674,69 @@ with tab2:
             event = st.dataframe(
                 df_scan_bb[['Ativo', 'Preço Atual', 'Distância Fech %']].style.format({
                     "Preço Atual": "{:.2f}", "Distância Fech %": "{:.2f}%"
-                }).map(lambda x: 'background-color: #ffcccb; color: black', subset=['Distância Fech %']),
+                }).map(lambda x: 'background-color: #e6fffa; color: black', subset=['Distância Fech %']),
                 use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
             )
             if len(event.selection.rows) > 0:
                 selected_index = event.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
         else:
-            st.info("Nenhuma ação brasileira encontrada tocando a banda inferior nesta semana.")
+            st.info("Nenhuma ação tocou a banda inferior sem furá-la nesta semana.")
 
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) ===
 # === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO DE APOIO ===
 with tab3:
     st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
     st.markdown("""
     **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
-    *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
-    *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17 (ordem preservada) e acima das longas.
     """)
     
-    col_roc_list, col_roc_chart = st.columns([1, 2])
-
-    with col_roc_list:
-        if not df_scan_roc.empty:
-            st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
     # --- SISTEMA DE VERIFICAÇÃO DE CLICK NO LINK ---
     if "aba3_liberada" not in st.session_state:
         st.session_state["aba3_liberada"] = False
 
+    # === ESTADO BLOQUEADO ===
     if not st.session_state["aba3_liberada"]:
         # TELA DE BLOQUEIO
         st.markdown("### 🔒 Conteúdo Exclusivo")
-        st.warning("O **Setup ROC (Caiu Comprou)** é uma ferramenta avançada. Para ajudar o desenvolvimento e liberar o acesso, clique no botão abaixo.")
+        st.warning("Este setup é uma ferramenta avançada. Para liberar a lista e o gráfico, clique no botão abaixo.")
         
         st.write("") # Espaço
         
         # Botão que abre o link e libera o conteúdo
-        # Ao clicar, o Python roda, seta a variavel para True, injeta o JS para abrir a aba e recarrega
-        if st.button("🚀 CLIQUE AQUI PARA APOIAR E LIBERAR O SETUP ROC", type="primary", use_container_width=True):
+        if st.button("🚀 LIBERAR ACESSO (Ver Lista e Gráfico)", type="primary", use_container_width=True):
+            # 1. Atualiza estado
             st.session_state["aba3_liberada"] = True
-
-            # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
-            if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
-                st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
-
-            # Formatação condicional da coluna Probabilidade
-            def color_prob(val):
-                color = '#d4edda' if 'Alta' in val else '#fff3cd'
-                return f'background-color: {color}; color: black; font-weight: bold;'
-
-            # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
-            event_roc = st.dataframe(
-                df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
-                    "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
-                }).map(color_prob, subset=['Probabilidade']),
-                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
-                key="roc_table"
-            )
-            # Script JS invisível para abrir o link em nova aba automaticamente
+            
+            # 2. Script JS invisível para abrir o link em nova aba automaticamente
             link_apoio = "https://multicoloredsister.com/3luWVi"
-            js_open = f"<script>window.open('{link_apoio}', '_blank');</script>"
+            
+            js_open = f"""
+            <script>
+                window.open('{link_apoio}', '_blank');
+            </script>
+            """
             components.html(js_open, height=0)
 
-            # Lógica de atualização ao clicar
-            if len(event_roc.selection.rows) > 0:
-                idx_roc = event_roc.selection.rows[0]
-                st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
+            # 3. Recarrega a página para remover o bloqueio visualmente
             st.rerun()
 
-        else:
-            st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
+    # === ESTADO LIBERADO ===
     else:
-        # --- CONTEÚDO ORIGINAL DA ABA 3 (LIBERADO) ---
-        st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
-        st.success("Acesso liberado! Obrigado pelo apoio.")
-        
-        st.markdown("""
-        **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
-        *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
-        *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17 (ordem preservada) e acima das longas.
-        """)
+        st.success("✅ Acesso Liberado!")
         
         col_roc_list, col_roc_chart = st.columns([1, 2])
 
         with col_roc_list:
             if not df_scan_roc.empty:
-                st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
+                st.write(f"**{len(df_scan_roc)} Ativos Encontrados:**")
                 
                 # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
-                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
+                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3" and len(df_scan_roc) > 0:
                     st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
 
                 # Formatação condicional da coluna Probabilidade
@@ -778,21 +759,15 @@ with tab3:
                     st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
                 
             else:
-                st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
+                st.info("Nenhuma ação atende aos critérios ROC nesta semana.")
 
-    with col_roc_chart:
-        clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
-        st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
-        # Usa interval="D" (Diário) como solicitado
-        show_chart_widget(st.session_state.tv_symbol, interval="D")
         with col_roc_chart:
             clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
             st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
-            # Usa interval="D" (Diário) como solicitado
+            # Usa interval="D" (Diário) como solicitado, apenas 1 gráfico
             show_chart_widget(st.session_state.tv_symbol, interval="D")
             
         st.divider()
         if st.button("Bloquear novamente (Reset)", key="lock_btn"):
             st.session_state["aba3_liberada"] = False
-
             st.rerun()
