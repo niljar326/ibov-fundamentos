@@ -589,3 +589,4 @@ with tab3:
             clean = st.session_state.tv_symbol.split(":")[-1]
             st.markdown(f"#### {clean} (Diário)")
             show_chart_widget(st.session_state.tv_symbol, interval="D")
+
