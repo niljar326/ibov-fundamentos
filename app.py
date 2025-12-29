@@ -110,8 +110,9 @@ with st.sidebar:
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3" # Padrão inicial
 
-# Inicializa o estado de bloqueio da Aba 3
-if 'tab3_unlocked' not in st.session_state: st.session_state.tab3_unlocked = False
+# --- ESTADO DE BLOQUEIO DA ABA 3 (INICIALIZAÇÃO ÚNICA) ---
+if 'tab3_access_granted' not in st.session_state:
+    st.session_state.tab3_access_granted = False
 
 def close_expander(): st.session_state.expander_open = False
 
@@ -697,35 +698,33 @@ with tab2:
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO DE BANNER ===
+# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO RÍGIDO ===
 with tab3:
-    # --- LÓGICA DE BLOQUEIO / DESBLOQUEIO ---
-    if not st.session_state['tab3_unlocked']:
-        st.subheader("🔒 Ferramenta Exclusiva Bloqueada")
-        st.info("Para liberar esta ferramenta avançada, precisamos da sua ajuda.")
+    # --- VERIFICAÇÃO RÍGIDA DO ESTADO ---
+    if st.session_state.tab3_access_granted is False:
+        # --- TELA DE BLOQUEIO (ÚNICA COISA VISÍVEL) ---
+        st.warning("🔒 Conteúdo Bloqueado")
+        st.info("Para liberar o acesso ao Setup ROC, clique no banner abaixo.")
         
-        # 1. MOSTRA O BANNER PRIMEIRO (COM CONTAINER VISÍVEL e HEIGHT MAIOR)
-        st.markdown("### 👉 Passo 1: Clique no Banner Abaixo")
-        st.caption("A propaganda abrirá nesta área. Se não aparecer, desative seu bloqueador de anúncios.")
-        
-        # O BANNER SOLICITADO (Altura aumentada para 150 para garantir renderização)
+        st.markdown("### Passo 1: Clique no Banner")
+        # Banner (Height 120 para garantir visibilidade)
         components.html("""
-            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; border: 1px dashed #cccccc; border-radius: 5px;">
+            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; background-color: #fafafa; border: 1px dashed #ccc;">
                 <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
             </div>
-        """, height=150)
+        """, height=120)
         
         st.divider()
         
-        # 2. BOTÃO PARA LIBERAR (DEPOIS DO BANNER)
-        st.markdown("### 👉 Passo 2: Confirme abaixo")
-        if st.button("✅ Já cliquei no banner / Liberar Lista"):
-            st.session_state['tab3_unlocked'] = True
+        st.markdown("### Passo 2: Confirme")
+        # Botão que efetivamente altera o estado para True
+        if st.button("🔓 Já cliquei no banner / Liberar Acesso"):
+            st.session_state.tab3_access_granted = True
             st.rerun()
             
     else:
-        # --- CONTEÚDO ORIGINAL DA ABA 3 (EXIBIDO APÓS O CLIQUE) ---
-        st.success("Obrigado! Conteúdo liberado com sucesso.")
+        # --- CONTEÚDO LIBERADO (SÓ APARECE SE O ESTADO FOR TRUE) ---
+        st.success("Acesso Liberado! Obrigado.")
         
         st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
         st.markdown("""
