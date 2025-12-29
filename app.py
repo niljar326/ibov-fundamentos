@@ -345,7 +345,7 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- SCANNER BOLLINGER (TOP 200 LIQUIDEZ - 3 SEMANAS - TOUCH WITHOUT PIERCE) ---
+# --- SCANNER BOLLINGER (TOP 200 - 2 SEMANAS - REJEIÇÃO) ---
 @st.cache_data(ttl=600)
 def scan_bollinger_weekly(df_top_liq):
     # Pega as Top 200 mais líquidas do dataframe fundamentalista
@@ -361,7 +361,7 @@ def scan_bollinger_weekly(df_top_liq):
 
     try:
         # Baixa dados SEMANAIS ('1wk') de 1 ano
-        # Precisamos de histórico para a SMA20 e pelo menos 3 semanas de dados recentes
+        # Precisamos de histórico para a SMA20 e pelo menos 2 semanas de dados recentes
         data = yf.download(tickers_sa, period="1y", interval="1wk", group_by='ticker', progress=False, threads=True)
 
         for t in tickers_sa:
@@ -382,29 +382,30 @@ def scan_bollinger_weekly(df_top_liq):
                 # Lower Band = Basis - 2 * StdDev
                 df_t['Lower'] = df_t['SMA20'] - (2.0 * df_t['STD20'])
 
-                # Precisamos checar as últimas 3 velas: 
-                # iloc[-1] (Atual), iloc[-2] (Semana passada), iloc[-3] (Retrasada)
+                # Checa as últimas 2 velas: 
+                # i=1 (Semana Atual), i=2 (Semana Passada)
                 
-                # Vamos iterar de 1 a 3 (índices negativos)
-                periodos = {1: "Atual", 2: "-1 Sem", 3: "-2 Sem"}
-                encontrou = False
-                
+                periodos = {1: "Atual", 2: "Sem. Passada"}
                 tolerancia = 1.015 # 1.5%
 
-                for i in range(1, 4):
+                # Loop apenas nas 2 últimas semanas
+                for i in range(1, 3): 
                     try:
                         candle = df_t.iloc[-i]
+                        
+                        close_price = candle['Close']
                         low_price = candle['Low']
                         lower_band = candle['Lower']
 
-                        # CRITÉRIO: "Tocou a banda inferior SEM FURÁ-LA"
-                        # 1. Não furou: A mínima (Low) é MAIOR ou IGUAL à banda inferior (Lower).
-                        # 2. Tocou: A mínima (Low) chegou muito perto. (1.5% de tolerância).
+                        # LÓGICA DO CLIENTE:
+                        # 1. Tocou na linha: low_price deve ser <= Lower * 1.015
+                        # 2. Se rompeu, tem que ter voltado acima: close_price >= Lower
+                        #    (Isso cobre o caso onde não rompeu também, pois se Low >= Lower, então Close > Lower naturalmente)
                         
-                        nao_furou = low_price >= lower_band
                         tocou = low_price <= (lower_band * tolerancia)
+                        voltou_acima = close_price >= lower_band
 
-                        if nao_furou and tocou:
+                        if tocou and voltou_acima:
                             # Calculamos a distância baseada na vela que disparou o sinal
                             dist = ((candle['Close'] - lower_band) / lower_band) * 100
                             
@@ -415,8 +416,8 @@ def scan_bollinger_weekly(df_top_liq):
                                 'Distância Fech %': dist,
                                 'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
                             })
-                            encontrou = True
-                            break # Se encontrou na semana mais recente (ou na ordem), para de olhar as anteriores para este ativo
+                            # Se encontrou na semana atual, já adiciona e passa para o próximo ativo (prioridade para recente)
+                            break 
                     except:
                         continue
                         
@@ -670,13 +671,14 @@ with tab1:
         else:
             st.info("Sem dividendos recentes.")
 
-# === ABA 2: SCANNER BB (TOP 200 - 3 SEMANAS - TOUCH WITHOUT PIERCE) ===
+# === ABA 2: SCANNER BB (TOP 200 - 2 SEMANAS - REJEIÇÃO) ===
 with tab2:
     st.subheader("📉 Setup: Bandas de Bollinger Semanal")
     st.markdown("""
     **Universo:** Top 200 ações mais líquidas da Bolsa.
-    **Critério:** Preço Mínimo (Low) tocou na Banda Inferior (Margem 1.5%) mas **NÃO furou** (Low >= Banda Inferior).
-    **Período:** Ocorrência na semana atual, semana passada ou retrasada.
+    **Critério:** Preço tocou na Banda Inferior (Margem 1.5%).
+    **Regra de Ouro:** Se o preço furou a banda (Low < Lower), ele **obrigatariamente** deve ter fechado acima dela (Close >= Lower) na mesma semana (Sinal de Rejeição/Suporte).
+    **Período:** Ocorrência na semana atual ou passada.
     """)
     st.warning("⚠️ **Atenção:** Este padrão sugere respeito ao suporte da banda.")
 
@@ -696,7 +698,7 @@ with tab2:
                 selected_index = event.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
         else:
-            st.info("Nenhuma das Top 200 ações tocou a banda inferior (sem furar) nas últimas 3 semanas.")
+            st.info("Nenhuma das Top 200 ações atendeu aos critérios nas últimas 2 semanas.")
 
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
@@ -718,26 +720,25 @@ with tab3:
     if not st.session_state["aba3_liberada"]:
         # TELA DE BLOQUEIO
         st.markdown("### 🔒 Conteúdo Exclusivo")
-        st.warning("Este setup é uma ferramenta avançada. Para liberar a lista e o gráfico, clique no botão abaixo.")
+        st.warning("Para liberar o acesso, interaja com o anúncio abaixo e clique no botão de confirmação.")
+        
+        # 1. ANÚNCIO INCORPORADO NA PÁGINA (COMPONENT IFRAME)
+        link_anuncio = "https://www.effectivegatecpm.com/urh5xq8n0z?key=9955f3da10b40520963a94897a1f8d7d"
+        st.caption("👇 Clique no site abaixo para liberar:")
+        components.iframe(link_anuncio, height=300, scrolling=True)
         
         st.write("") # Espaço
         
-        # Botão que abre o link (Embedado) e libera o conteúdo
-        if st.button("🚀 LIBERAR ACESSO (Ver Lista e Gráfico)", type="primary", use_container_width=True):
-            # 1. Atualiza estado
+        # 2. BOTÃO DE VALIDAÇÃO (FLUXO MANUAL OBRIGATÓRIO DEVIDO A SEGURANÇA CORS)
+        st.info("Após clicar no site acima, confirme no botão abaixo:")
+        if st.button("🔓 JÁ ACESSEI O SITE (LIBERAR CONTEÚDO)", type="primary", use_container_width=True):
+            # Atualiza estado e recarrega
             st.session_state["aba3_liberada"] = True
             st.rerun()
 
     # === ESTADO LIBERADO ===
     else:
         st.success("✅ Acesso Liberado!")
-        
-        # --- ÁREA DO ANÚNCIO (EMBEDADO PARA EVITAR POPUP BLOCKER) ---
-        st.caption("Patrocinador:")
-        # O iframe cria o espaço na página
-        link_anuncio = "https://www.effectivegatecpm.com/urh5xq8n0z?key=9955f3da10b40520963a94897a1f8d7d"
-        components.iframe(link_anuncio, height=250, scrolling=True)
-        # ------------------------------------------------------------
         
         col_roc_list, col_roc_chart = st.columns([1, 2])
 
