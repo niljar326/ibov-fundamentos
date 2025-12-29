@@ -110,9 +110,10 @@ with st.sidebar:
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3" # Padrão inicial
 
-# --- ESTADO DE BLOQUEIO DA ABA 3 (INICIALIZAÇÃO ÚNICA) ---
-if 'tab3_access_granted' not in st.session_state:
-    st.session_state.tab3_access_granted = False
+# --- ESTADO DE BLOQUEIO DA ABA 3 (V2 - Limpa estado anterior) ---
+# Mudamos o nome da chave para forçar o bloqueio nesta nova versão do código
+if 'tab3_unlocked_v2' not in st.session_state:
+    st.session_state.tab3_unlocked_v2 = False
 
 def close_expander(): st.session_state.expander_open = False
 
@@ -701,7 +702,7 @@ with tab2:
 # === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO RÍGIDO ===
 with tab3:
     # --- VERIFICAÇÃO RÍGIDA DO ESTADO ---
-    if st.session_state.tab3_access_granted is False:
+    if st.session_state.tab3_unlocked_v2 is False:
         # --- TELA DE BLOQUEIO (ÚNICA COISA VISÍVEL) ---
         st.warning("🔒 Conteúdo Bloqueado")
         st.info("Para liberar o acesso ao Setup ROC, clique no banner abaixo.")
@@ -717,9 +718,10 @@ with tab3:
         st.divider()
         
         st.markdown("### Passo 2: Confirme")
+        st.write("Após clicar no anúncio e fechar a janela, clique abaixo:")
         # Botão que efetivamente altera o estado para True
         if st.button("🔓 Já cliquei no banner / Liberar Acesso"):
-            st.session_state.tab3_access_granted = True
+            st.session_state.tab3_unlocked_v2 = True
             st.rerun()
             
     else:
