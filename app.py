@@ -347,16 +347,15 @@ def get_market_news():
 
 # --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL - SÓ LOWER BAND) ---
 @st.cache_data(ttl=600)
-def scan_bollinger_weekly():
-    # Lista de Ações Líquidas da B3
-    tickers_br = [
-        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", 
-        "MGLU3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
-        "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA", "AZUL4.SA", 
-        "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA", "TOTS3.SA", 
-        "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA", "ABEV3.SA", "ASAI3.SA", "CRFB3.SA", "MULT3.SA",
-        "CYRE3.SA", "EZTC3.SA", "MRVE3.SA", "PETZ3.SA", "SOMA3.SA", "ALPA4.SA", "LREN3.SA"
-    ]
+def scan_bollinger_weekly(df_base):
+    if df_base.empty: return pd.DataFrame()
+
+    # 1. Pega as Top 200 Ações por Liquidez do Dataframe Fundamentalista
+    try:
+        top_200 = df_base.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
+        tickers_br = [t + ".SA" for t in top_200]
+    except:
+        return pd.DataFrame()
     
     candidates = []
     
@@ -384,8 +383,21 @@ def scan_bollinger_weekly():
                 # Pega a vela ATUAL (Semana corrente)
                 curr = df_t.iloc[-1]
                 
-                # CRITÉRIO: Mínima da semana tocou ou furou a Banda Inferior
+                # --- LÓGICA DE FILTRO ATUALIZADA ---
+                
+                # 1. Excluir se o preço (Máxima da semana) tocou na linha do meio (SMA20) ou se está acima
+                if curr['High'] >= curr['SMA20']:
+                    continue
+
+                # 2. Critério de Entrada: Mínima da semana tocou ou furou a Banda Inferior
                 if curr['Low'] <= curr['Lower']:
+                    
+                    # 3. Critério de Segurança: Não pode ter caído mais de 10% abaixo da linha Lower
+                    # Se Fechamento < Lower * 0.90, descarta.
+                    limite_queda = curr['Lower'] * 0.90
+                    if curr['Close'] < limite_queda:
+                        continue
+
                     clean_ticker = t.replace(".SA", "")
                     
                     dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
@@ -546,8 +558,9 @@ with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_weekly() # Novo Scanner BB
-    df_scan_roc = scan_roc_weekly(df_raw) # Novo Scanner ROC
+    # MODIFICAÇÃO: PASSAMOS O DF_RAW AGORA PARA PEGAR AS TOP 200
+    df_scan_bb = scan_bollinger_weekly(df_raw) 
+    df_scan_roc = scan_roc_weekly(df_raw)
 
 # --- SISTEMA DE ABAS ---
 tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Lower Band)", "🚀 Setup ROC (Caiu Comprou)"])
@@ -651,13 +664,18 @@ with tab1:
 # === ABA 2: SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
 with tab2:
     st.subheader("📉 Setup: Bandas de Bollinger Semanal (Lower Band)")
-    st.warning("⚠️ **Atenção:** Este filtro mostra ações tocando a banda inferior. Considere o fato de que ações em forte tendência de baixa podem continuar caindo.")
+    st.markdown("""
+    **Critérios Aplicados (Top 200 Liquidez):**
+    1. Preço Mínimo tocou a Banda Inferior.
+    2. **Exclusão 1:** Empresas cujo preço Máximo tocou ou está acima da Média (Meio).
+    3. **Exclusão 2:** Rompimentos muito fortes (Queda > 10% abaixo da banda).
+    """)
     
     col_list, col_chart = st.columns([1, 2])
     
     with col_list:
         if not df_scan_bb.empty:
-            st.write(f"**{len(df_scan_bb)} Oportunidades:**")
+            st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
             # Usa interval="W"
             event = st.dataframe(
                 df_scan_bb[['Ativo', 'Preço Atual', 'Distância Fech %']].style.format({
@@ -669,7 +687,7 @@ with tab2:
                 selected_index = event.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
         else:
-            st.info("Nenhuma ação brasileira encontrada tocando a banda inferior nesta semana.")
+            st.info("Nenhuma ação atende a todos os filtros (Toque Lower, Longe da Média, Queda Controlada).")
             
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
