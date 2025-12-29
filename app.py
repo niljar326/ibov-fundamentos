@@ -106,14 +106,17 @@ with st.sidebar:
             
     st.caption("Desenvolvido com Streamlit")
 
-# --- Estado ---
+# --- Estado e Controle de Bloqueio ---
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3" # Padrão inicial
 
-# --- ESTADO DE BLOQUEIO DA ABA 3 (V2 - Limpa estado anterior) ---
-# Mudamos o nome da chave para forçar o bloqueio nesta nova versão do código
-if 'tab3_unlocked_v2' not in st.session_state:
-    st.session_state.tab3_unlocked_v2 = False
+# Estado de Bloqueio da ABA 1 (Ranking)
+if 'tab1_unlocked' not in st.session_state:
+    st.session_state.tab1_unlocked = False
+
+# Estado de Bloqueio da ABA 3 (ROC)
+if 'tab3_unlocked' not in st.session_state:
+    st.session_state.tab3_unlocked = False
 
 def close_expander(): st.session_state.expander_open = False
 
@@ -350,15 +353,16 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL - SÓ LOWER BAND) ---
+# --- SCANNER BOLLINGER (CENTRAL BAND / SMA 20) ---
+# Nova Lógica: Top 300 Liquidez. Tocou Média, Fechou Acima. (Semana atual ou anterior)
 @st.cache_data(ttl=600)
-def scan_bollinger_weekly(df_base):
+def scan_bollinger_weekly_central(df_base):
     if df_base.empty: return pd.DataFrame()
 
-    # 1. Pega as Top 200 Ações por Liquidez do Dataframe Fundamentalista
+    # 1. Pega as Top 300 Ações por Liquidez
     try:
-        top_200 = df_base.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
-        tickers_br = [t + ".SA" for t in top_200]
+        top_300 = df_base.sort_values(by='liq2m', ascending=False).head(300)['papel'].tolist()
+        tickers_br = [t + ".SA" for t in top_300]
     except:
         return pd.DataFrame()
     
@@ -375,44 +379,53 @@ def scan_bollinger_weekly(df_base):
                 
                 # Limpeza
                 df_t.dropna(subset=['Close'], inplace=True)
-                if len(df_t) < 22: continue # Precisa de histórico para a média
+                if len(df_t) < 22: continue 
 
-                # Cálculo Bandas Bollinger (20, 2)
-                # Basis = SMA 20
+                # Cálculo Linha Central (SMA 20)
                 df_t['SMA20'] = df_t['Close'].rolling(window=20).mean()
-                # StdDev
-                df_t['STD20'] = df_t['Close'].rolling(window=20).std()
-                # Lower Band = Basis - 2 * StdDev
-                df_t['Lower'] = df_t['SMA20'] - (2.0 * df_t['STD20'])
                 
-                # Pega a vela ATUAL (Semana corrente)
+                # Pega Semana Atual e Anterior
                 curr = df_t.iloc[-1]
+                prev = df_t.iloc[-2]
                 
-                # --- LÓGICA DE FILTRO ATUALIZADA ---
+                # --- LÓGICA DE FILTRO (LINHA CENTRAL / PULLBACK NA MÉDIA) ---
                 
-                # 1. Excluir se o preço (Máxima da semana) tocou na linha do meio (SMA20) ou se está acima
-                if curr['High'] >= curr['SMA20']:
-                    continue
+                # Função auxiliar para verificar a condição numa vela
+                def check_pullback_sma(row):
+                    # 1. Preço Mínimo (Low) tocou a média ou foi abaixo
+                    touched_sma = row['Low'] <= row['SMA20']
+                    # 2. Fechamento (Close) ficou ACIMA da média (Respeitou a média)
+                    closed_above = row['Close'] > row['SMA20']
+                    return touched_sma and closed_above
 
-                # 2. Critério de Entrada: Mínima da semana tocou ou furou a Banda Inferior
-                if curr['Low'] <= curr['Lower']:
-                    
-                    # 3. Critério de Segurança: Não pode ter caído mais de 10% abaixo da linha Lower
-                    # Se Fechamento < Lower * 0.90, descarta.
-                    limite_queda = curr['Lower'] * 0.90
-                    if curr['Close'] < limite_queda:
-                        continue
+                # Verifica Semana Atual OU Semana Anterior
+                found_setup = False
+                periodo_str = ""
+                
+                if check_pullback_sma(curr):
+                    found_setup = True
+                    periodo_str = "Semana Atual"
+                    curr_row = curr
+                elif check_pullback_sma(prev):
+                    found_setup = True
+                    periodo_str = "Semana Anterior"
+                    curr_row = prev # Usa dados da semana do setup para exibição, ou atual?
+                    # Geralmente queremos ver o preço HOJE, mas saber que o setup foi semana passada.
+                    # Vamos manter o preço atual para exibição, mas a flag é verdadeira.
+                    curr_row = curr
 
+                if found_setup:
                     clean_ticker = t.replace(".SA", "")
                     
-                    dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
+                    # Distância atual da média
+                    dist = ((curr['Close'] - curr['SMA20']) / curr['SMA20']) * 100
                     
                     candidates.append({
                         'Ativo': clean_ticker,
+                        'Setup': periodo_str,
                         'Preço Atual': curr['Close'],
-                        'Mínima Sem.': curr['Low'],
-                        'Banda Inf': curr['Lower'],
-                        'Distância Fech %': dist,
+                        'Média (20)': curr['SMA20'],
+                        'Dist. Média %': dist,
                         'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
                     })
             except: continue
@@ -563,117 +576,112 @@ with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    # MODIFICAÇÃO: PASSAMOS O DF_RAW AGORA PARA PEGAR AS TOP 200
-    df_scan_bb = scan_bollinger_weekly(df_raw) 
+    # MODIFICAÇÃO: PASSAMOS O DF_RAW AGORA PARA PEGAR AS TOP 300 E NOVO SETUP
+    df_scan_bb = scan_bollinger_weekly_central(df_raw) 
     df_scan_roc = scan_roc_weekly(df_raw)
 
 # --- SISTEMA DE ABAS ---
-tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Lower Band)", "🚀 Setup ROC (Caiu Comprou)"])
+tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup Média 20 (Pullback)", "🚀 Setup ROC (Caiu Comprou)"])
 
-# === ABA 1: CONTEÚDO ORIGINAL ===
+# === ABA 1: CONTEÚDO COM BLOQUEIO DE LISTA ===
 with tab1:
     st.markdown("""
     <div style="text-align: justify; margin-bottom: 20px;">
     Este <b>Screener Fundamentalista</b> filtra automaticamente as melhores oportunidades. 
-    Abaixo, você também encontra uma lista de <b>Alerta</b> para empresas em situações delicadas.
     </div>
     """, unsafe_allow_html=True)
 
-    if not df_best.empty:
-        st.subheader("🏆 Melhores Ações (Oportunidades)")
-        st.caption("Filtro: P/L Baixo, Alta Rentabilidade e Dividendos.")
+    # --- LÓGICA DE BLOQUEIO DA ABA 1 ---
+    if st.session_state.tab1_unlocked is False:
+        st.info("🔒 **Lista Protegida:** Para visualizar as melhores ações, clique no banner abaixo.")
         
-        cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
-        even_cols_subset = ['Preço', 'P/L', 'DY']
-        styler = df_best[cols_view].style.map(
-            lambda x: 'background-color: #f2f2f2; color: black;', 
-            subset=even_cols_subset
-        ).format({
-            "Preço": "R$ {:.2f}", "EV/EBIT": "{:.2f}", "P/L": "{:.2f}",
-            "ROE": "{:.2f}", "DY": "{:.2f}", "Margem Líq.": "{:.2f}"
-        })
+        # Banner de Desbloqueio
+        components.html("""
+            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; background-color: #fafafa; border: 1px dashed #ccc;">
+                <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
+            </div>
+        """, height=120)
+        
+        if st.button("🔓 Já cliquei no banner / Liberar Lista", key="btn_unlock_tab1"):
+            st.session_state.tab1_unlocked = True
+            st.rerun()
+            
+    else:
+        # --- CONTEÚDO LIBERADO ---
+        if not df_best.empty:
+            st.subheader("🏆 Melhores Ações (Oportunidades)")
+            st.caption("Filtro: P/L Baixo, Alta Rentabilidade e Dividendos.")
+            
+            cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
+            even_cols_subset = ['Preço', 'P/L', 'DY']
+            styler = df_best[cols_view].style.map(
+                lambda x: 'background-color: #f2f2f2; color: black;', 
+                subset=even_cols_subset
+            ).format({
+                "Preço": "R$ {:.2f}", "EV/EBIT": "{:.2f}", "P/L": "{:.2f}",
+                "ROE": "{:.2f}", "DY": "{:.2f}", "Margem Líq.": "{:.2f}"
+            })
 
-        st.dataframe(styler, use_container_width=True, column_config={"Preço": st.column_config.NumberColumn(format="R$ %.2f")}, hide_index=True)
+            st.dataframe(styler, use_container_width=True, column_config={"Preço": st.column_config.NumberColumn(format="R$ %.2f")}, hide_index=True)
 
-    st.divider()
-    col_ad1, col_ad2 = st.columns(2)
-    with col_ad1:
-        st.markdown("""
-        <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
-            <h4 style="margin-top:0; color: #333;">✈️ Nomad: Taxa Zero em Dólar</h4>
-            <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão (até US$ 1.000) para investir nos EUA.</p>
-            <p style="font-size: 14px;">Código: <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
-            <div style="text-align:center;"><a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">➡️ <b>Abrir Conta Nomad</b></a></div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col_ad2:
-        st.markdown("""
-        <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
-            <h4 style="margin-top:0; color: #009ee3;">🤝 Mercado Pago: R$ 30 OFF</h4>
-            <p style="font-size: 14px;">Use o app pela primeira vez (pagamento mín. R$ 70) e ganhe <b>R$ 30 de desconto</b>.</p>
-            <div style="text-align:center;"><a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">➡️ <b>Resgatar R$ 30</b></a></div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.divider()
+        st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
+        st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
+        if not df_warning.empty:
+            def color_negative_red(val):
+                if isinstance(val, str) and '-' in val: return 'color: red; font-weight: bold;'
+                return ''
+            styler_risk = df_warning.style.map(color_negative_red, subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "Alavancagem (Dív/Patr)": "{:.2f}"})
+            st.dataframe(styler_risk, use_container_width=True, hide_index=True)
+        else: st.info("Nenhuma ação com os critérios de risco (Dívida Extrema + Queda Lucro) encontrada hoje.")
 
-    st.divider()
+        st.divider()
+        st.subheader("📈 Análise Visual: Cotação vs Lucro")
+        options = df_best['Ativo'].tolist()
+        idx_default = 0
+        if 'LREN3' in options:
+            try: idx_default = options.index('LREN3')
+            except: pass
+        with st.expander("🔎 Selecionar Ação para o Gráfico", expanded=st.session_state.expander_open):
+            selected = st.selectbox("Ativo:", options, index=idx_default, on_change=close_expander)
+        if selected:
+            with st.spinner(f'Gerando gráfico para {selected}...'):
+                df_chart = get_chart_data(selected)
+            if df_chart is not None and not df_chart.empty:
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=df_chart['Periodo'], y=df_chart['Receita'], name="Receita", marker=dict(color='#A9A9A9', line=dict(color='black', width=1)), text=df_chart['Receita_Texto'], textposition='outside', yaxis='y1'))
+                fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Lucro'], name="Lucro Líquido", mode='lines+markers', line=dict(color='#006400', width=3), marker=dict(size=8, color='#006400'), yaxis='y2'))
+                fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='#00008B', width=3), marker=dict(size=8, symbol='diamond', color='#00008B'), yaxis='y3'))
+                fig.update_layout(title=f"{selected}: Receita vs Lucro vs Preço", xaxis=dict(type='category', title="Período"), yaxis=dict(title="Receita", side="left", showgrid=False, title_font=dict(color="gray")), yaxis2=dict(title="Lucro", side="right", overlaying="y", showgrid=False, title_font=dict(color="green")), yaxis3=dict(title="Cotação", side="right", overlaying="y", position=0.95, showgrid=False, showticklabels=False, title_font=dict(color="blue")), legend=dict(orientation="h", y=1.1, x=0), hovermode="x unified", barmode='overlay', height=500)
+                st.plotly_chart(fig, use_container_width=True)
+            else: st.warning(f"Dados históricos indisponíveis para {selected}.")
 
-    st.subheader("⚠️ Atenção! Empresas em Risco / Recup. Judicial")
-    st.markdown("**Critérios:** Em Recuperação Judicial (Lista B3) **OU** Alavancagem Alta (Dívida > 3x Patrimônio) **E** Queda no Lucro.")
-    if not df_warning.empty:
-        def color_negative_red(val):
-            if isinstance(val, str) and '-' in val: return 'color: red; font-weight: bold;'
-            return ''
-        styler_risk = df_warning.style.map(color_negative_red, subset=['Queda Lucro (Ano)']).format({"Preço": "R$ {:.2f}", "Alavancagem (Dív/Patr)": "{:.2f}"})
-        st.dataframe(styler_risk, use_container_width=True, hide_index=True)
-    else: st.info("Nenhuma ação com os critérios de risco (Dívida Extrema + Queda Lucro) encontrada hoje.")
+        st.divider()
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("📰 Notícias (Brasília)")
+            news = get_market_news()
+            if news:
+                for n in news: st.markdown(f"**[{n['title']}]({n['link']})**  \n*{n['source']} - {n['date_str']}*")
+            else: st.info("Sem notícias.")
+        with c2:
+            st.subheader("💰 Dividendos Recentes")
+            df_divs = get_latest_dividends(df_best['Ativo'].tolist() if not df_best.empty else [])
+            if not df_divs.empty:
+                df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
+                df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
+                st.dataframe(df_divs, hide_index=True)
+            else:
+                st.info("Sem dividendos recentes.")
 
-    st.divider()
-    st.subheader("📈 Análise Visual: Cotação vs Lucro")
-    options = df_best['Ativo'].tolist()
-    idx_default = 0
-    if 'LREN3' in options:
-        try: idx_default = options.index('LREN3')
-        except: pass
-    with st.expander("🔎 Selecionar Ação para o Gráfico", expanded=st.session_state.expander_open):
-        selected = st.selectbox("Ativo:", options, index=idx_default, on_change=close_expander)
-    if selected:
-        with st.spinner(f'Gerando gráfico para {selected}...'):
-            df_chart = get_chart_data(selected)
-        if df_chart is not None and not df_chart.empty:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=df_chart['Periodo'], y=df_chart['Receita'], name="Receita", marker=dict(color='#A9A9A9', line=dict(color='black', width=1)), text=df_chart['Receita_Texto'], textposition='outside', yaxis='y1'))
-            fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Lucro'], name="Lucro Líquido", mode='lines+markers', line=dict(color='#006400', width=3), marker=dict(size=8, color='#006400'), yaxis='y2'))
-            fig.add_trace(go.Scatter(x=df_chart['Periodo'], y=df_chart['Cotação'], name="Cotação", mode='lines+markers', line=dict(color='#00008B', width=3), marker=dict(size=8, symbol='diamond', color='#00008B'), yaxis='y3'))
-            fig.update_layout(title=f"{selected}: Receita vs Lucro vs Preço", xaxis=dict(type='category', title="Período"), yaxis=dict(title="Receita", side="left", showgrid=False, title_font=dict(color="gray")), yaxis2=dict(title="Lucro", side="right", overlaying="y", showgrid=False, title_font=dict(color="green")), yaxis3=dict(title="Cotação", side="right", overlaying="y", position=0.95, showgrid=False, showticklabels=False, title_font=dict(color="blue")), legend=dict(orientation="h", y=1.1, x=0), hovermode="x unified", barmode='overlay', height=500)
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.warning(f"Dados históricos indisponíveis para {selected}.")
-
-    st.divider()
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("📰 Notícias (Brasília)")
-        news = get_market_news()
-        if news:
-            for n in news: st.markdown(f"**[{n['title']}]({n['link']})**  \n*{n['source']} - {n['date_str']}*")
-        else: st.info("Sem notícias.")
-    with c2:
-        st.subheader("💰 Dividendos Recentes")
-        df_divs = get_latest_dividends(df_best['Ativo'].tolist() if not df_best.empty else [])
-        if not df_divs.empty:
-            df_divs['Data'] = df_divs['Data'].dt.strftime('%d/%m/%Y')
-            df_divs['Valor'] = df_divs['Valor'].apply(lambda x: f"R$ {x:.4f}")
-            st.dataframe(df_divs, hide_index=True)
-        else:
-            st.info("Sem dividendos recentes.")
-
-# === ABA 2: SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
+# === ABA 2: SCANNER BB (MÉDIA CENTRAL - SMA 20) ===
 with tab2:
-    st.subheader("📉 Setup: Bandas de Bollinger Semanal (Lower Band)")
+    st.subheader("📉 Setup: Pullback na Média de 20 (Semanal)")
     st.markdown("""
-    **Critérios Aplicados (Top 200 Liquidez):**
-    1. Preço Mínimo tocou a Banda Inferior.
-    2. **Exclusão 1:** Empresas cujo preço Máximo tocou ou está acima da Média (Meio).
-    3. **Exclusão 2:** Rompimentos muito fortes (Queda > 10% abaixo da banda).
+    **Critérios Aplicados (Top 300 Liquidez):**
+    1. Preço Mínimo tocou (ou furou) a Média Móvel Central (SMA 20).
+    2. Fechamento da vela terminou **ACIMA** da Média.
+    3. Condição válida para a **Semana Atual** ou **Semana Anterior**.
     """)
     
     col_list, col_chart = st.columns([1, 2])
@@ -681,33 +689,33 @@ with tab2:
     with col_list:
         if not df_scan_bb.empty:
             st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
-            # Usa interval="W"
+            
+            # Formatação
             event = st.dataframe(
-                df_scan_bb[['Ativo', 'Preço Atual', 'Distância Fech %']].style.format({
-                    "Preço Atual": "{:.2f}", "Distância Fech %": "{:.2f}%"
-                }).map(lambda x: 'background-color: #ffcccb; color: black', subset=['Distância Fech %']),
+                df_scan_bb[['Ativo', 'Setup', 'Preço Atual', 'Dist. Média %']].style.format({
+                    "Preço Atual": "{:.2f}", "Dist. Média %": "{:.2f}%"
+                }),
                 use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
             )
             if len(event.selection.rows) > 0:
                 selected_index = event.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
         else:
-            st.info("Nenhuma ação atende a todos os filtros (Toque Lower, Longe da Média, Queda Controlada).")
+            st.info("Nenhuma ação atende aos filtros (Toque na Média + Fechamento Acima) nas últimas 2 semanas.")
             
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO RÍGIDO ===
+# === ABA 3: SCANNER ROC (SETUP CAIU COMPROU) COM BLOQUEIO ===
 with tab3:
     # --- VERIFICAÇÃO RÍGIDA DO ESTADO ---
-    if st.session_state.tab3_unlocked_v2 is False:
-        # --- TELA DE BLOQUEIO (ÚNICA COISA VISÍVEL) ---
+    if st.session_state.tab3_unlocked is False:
+        # --- TELA DE BLOQUEIO ---
         st.warning("🔒 Conteúdo Bloqueado")
         st.info("Para liberar o acesso ao Setup ROC, clique no banner abaixo.")
         
-        st.markdown("### Passo 1: Clique no Banner")
         # Banner (Height 120 para garantir visibilidade)
         components.html("""
             <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; background-color: #fafafa; border: 1px dashed #ccc;">
@@ -715,17 +723,12 @@ with tab3:
             </div>
         """, height=120)
         
-        st.divider()
-        
-        st.markdown("### Passo 2: Confirme")
-        st.write("Após clicar no anúncio e fechar a janela, clique abaixo:")
-        # Botão que efetivamente altera o estado para True
-        if st.button("🔓 Já cliquei no banner / Liberar Acesso"):
-            st.session_state.tab3_unlocked_v2 = True
+        if st.button("🔓 Já cliquei no banner / Liberar Acesso", key="btn_unlock_tab3"):
+            st.session_state.tab3_unlocked = True
             st.rerun()
             
     else:
-        # --- CONTEÚDO LIBERADO (SÓ APARECE SE O ESTADO FOR TRUE) ---
+        # --- CONTEÚDO LIBERADO ---
         st.success("Acesso Liberado! Obrigado.")
         
         st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
@@ -741,16 +744,15 @@ with tab3:
             if not df_scan_roc.empty:
                 st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
                 
-                # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
+                # 1. SELEÇÃO PADRÃO
                 if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
                     st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
 
-                # Formatação condicional da coluna Probabilidade
+                # Formatação
                 def color_prob(val):
                     color = '#d4edda' if 'Alta' in val else '#fff3cd'
                     return f'background-color: {color}; color: black; font-weight: bold;'
 
-                # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
                 event_roc = st.dataframe(
                     df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
                         "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
@@ -770,5 +772,4 @@ with tab3:
         with col_roc_chart:
             clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
             st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
-            # Usa interval="D" (Diário) como solicitado
             show_chart_widget(st.session_state.tv_symbol, interval="D")
