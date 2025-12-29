@@ -39,7 +39,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
     
-    /* Estilo para o botão de Pix/Desbloqueio */
+    /* Estilo para o botão de Pix */
     div.stButton > button:first-child {
         width: 100%;
         border-radius: 8px;
@@ -345,72 +345,59 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- SCANNER BOLLINGER (TOP 200 - 2 SEMANAS - TOUCH + CLOSE ABOVE) ---
+# --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL - SÓ LOWER BAND) ---
 @st.cache_data(ttl=600)
-def scan_bollinger_weekly(df_top_liq):
-    # Pega as Top 200 mais líquidas do dataframe fundamentalista
-    if df_top_liq.empty: return pd.DataFrame()
-
-    # Ordena por liquidez e pega top 200
-    top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
-
-    # Adiciona sufixo .SA
-    tickers_sa = [t + ".SA" for t in top_tickers]
+def scan_bollinger_weekly():
+    # Lista de Ações Líquidas da B3
+    tickers_br = [
+        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", 
+        "MGLU3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
+        "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA", "AZUL4.SA", 
+        "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA", "TOTS3.SA", 
+        "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA", "ABEV3.SA", "ASAI3.SA", "CRFB3.SA", "MULT3.SA",
+        "CYRE3.SA", "EZTC3.SA", "MRVE3.SA", "PETZ3.SA", "SOMA3.SA", "ALPA4.SA", "LREN3.SA"
+    ]
 
     candidates = []
 
     try:
-        # Baixa dados SEMANAIS ('1wk') de 1 ano
-        data = yf.download(tickers_sa, period="1y", interval="1wk", group_by='ticker', progress=False, threads=True)
+        # Baixa dados SEMANAIS ('1wk') dos últimos 2 anos (necessário para calcular SMA 20 semanas)
+        data = yf.download(tickers_br, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
 
-        for t in tickers_sa:
-            clean_ticker = t.replace(".SA", "")
+        for t in tickers_br:
             try:
                 df_t = data[t].copy() if t in data else pd.DataFrame()
                 if df_t.empty: continue
 
+                # Limpeza
                 df_t.dropna(subset=['Close'], inplace=True)
-                if len(df_t) < 22: continue 
+                if len(df_t) < 22: continue # Precisa de histórico para a média
 
                 # Cálculo Bandas Bollinger (20, 2)
+                # Basis = SMA 20
                 df_t['SMA20'] = df_t['Close'].rolling(window=20).mean()
+                # StdDev
                 df_t['STD20'] = df_t['Close'].rolling(window=20).std()
+                # Lower Band = Basis - 2 * StdDev
                 df_t['Lower'] = df_t['SMA20'] - (2.0 * df_t['STD20'])
 
-                periodos = {1: "Atual", 2: "Sem. Passada"}
-                tolerancia = 1.015 # 1.5%
+                # Pega a vela ATUAL (Semana corrente)
+                curr = df_t.iloc[-1]
 
-                # Loop apenas nas 2 últimas semanas (índice 1 e 2)
-                for i in range(1, 3): 
-                    try:
-                        candle = df_t.iloc[-i]
-                        
-                        close_price = candle['Close']
-                        low_price = candle['Low']
-                        lower_band = candle['Lower']
+                # CRITÉRIO: Mínima da semana tocou ou furou a Banda Inferior
+                if curr['Low'] <= curr['Lower']:
+                    clean_ticker = t.replace(".SA", "")
 
-                        # LÓGICA DO CLIENTE:
-                        # 1. Tocou na linha: low_price deve ser <= Lower * 1.015
-                        # 2. Se rompeu (ou apenas tocou), tem que ter fechado ACIMA da linha (Close >= Lower)
-                        #    Isso garante que se furou (Low < Lower), ele voltou (Close >= Lower).
-                        
-                        touched = low_price <= (lower_band * tolerancia)
-                        closed_inside = close_price >= lower_band
+                    dist = ((curr['Close'] - curr['Lower']) / curr['Lower']) * 100
 
-                        if touched and closed_inside:
-                            dist = ((candle['Close'] - lower_band) / lower_band) * 100
-                            
-                            candidates.append({
-                                'Ativo': clean_ticker,
-                                'Preço (Ref)': candle['Close'],
-                                'Semana': periodos[i],
-                                'Distância Fech %': dist,
-                                'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
-                            })
-                            break 
-                    except:
-                        continue
-                        
+                    candidates.append({
+                        'Ativo': clean_ticker,
+                        'Preço Atual': curr['Close'],
+                        'Mínima Sem.': curr['Low'],
+                        'Banda Inf': curr['Lower'],
+                        'Distância Fech %': dist,
+                        'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
+                    })
             except: continue
 
         return pd.DataFrame(candidates)
@@ -419,14 +406,19 @@ def scan_bollinger_weekly(df_top_liq):
 # --- SCANNER ROC EMA (SETUP CAIU COMPROU) ---
 @st.cache_data(ttl=3600*4)
 def scan_roc_weekly(df_top_liq):
-    # Pega as top 90 ações por liquidez
+    # Pega as top 90 ações por liquidez do dataframe fundamentalista
     if df_top_liq.empty: return pd.DataFrame()
+
+    # Ordena por liquidez e pega top 90 (simulando top ibov)
     top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(90)['papel'].tolist()
+
+    # Adiciona sufixo .SA
     tickers_sa = [t + ".SA" for t in top_tickers]
 
     candidates = []
 
     try:
+        # Baixa dados SEMANAIS ('1wk') dos últimos 7 anos (precisa de 305 periodos para ema4 + folga)
         data = yf.download(tickers_sa, period="7y", interval="1wk", group_by='ticker', progress=False, threads=True)
 
         for t in tickers_sa:
@@ -434,16 +426,23 @@ def scan_roc_weekly(df_top_liq):
             try:
                 df_t = data[t].copy() if t in data else pd.DataFrame()
                 if df_t.empty: continue
+
                 df_t.dropna(subset=['Close'], inplace=True)
+                # Verifica histórico suficiente para EMA 305 (310 semanas)
                 if len(df_t) < 310: continue
 
-                # EMAs
+                # Cálculo das EMAS
+                # EMA 17
                 df_t['EMA17'] = df_t['Close'].ewm(span=17, adjust=False).mean()
+                # EMA 34
                 df_t['EMA34'] = df_t['Close'].ewm(span=34, adjust=False).mean()
+                # EMA 72
                 df_t['EMA72'] = df_t['Close'].ewm(span=72, adjust=False).mean()
+                # EMA 305
                 df_t['EMA305'] = df_t['Close'].ewm(span=305, adjust=False).mean()
 
-                # ROC
+                # ROC (Distância % do Preço para a EMA)
+                # ROC = ((Close - EMA) / EMA) * 100
                 df_t['ROC17'] = ((df_t['Close'] - df_t['EMA17']) / df_t['EMA17']) * 100
                 df_t['ROC34'] = ((df_t['Close'] - df_t['EMA34']) / df_t['EMA34']) * 100
                 df_t['ROC72'] = ((df_t['Close'] - df_t['EMA72']) / df_t['EMA72']) * 100
@@ -451,12 +450,29 @@ def scan_roc_weekly(df_top_liq):
 
                 curr = df_t.iloc[-1]
 
-                cond_alta = (curr['ROC17'] < 0) & (curr['ROC34'] > 0) & (curr['ROC72'] > 0) & (curr['ROC305'] > 0)
-                cond_media = (curr['ROC17'] < 0) & (curr['ROC34'] < 0) & (curr['ROC34'] > curr['ROC17']) & (curr['ROC72'] > 0) & (curr['ROC305'] > 0)
+                # LÓGICA DO USUÁRIO
+                # 1. EMA1 Negativa, resto Positiva -> "Alta (Caiu Comprou)"
+                cond_alta = (
+                    (curr['ROC17'] < 0) & 
+                    (curr['ROC34'] > 0) & 
+                    (curr['ROC72'] > 0) & 
+                    (curr['ROC305'] > 0)
+                )
+
+                # 2. EMA1 Negativa, EMA2 Maior que EMA1 (mesmo que negativa), resto Positiva -> "Média"
+                cond_media = (
+                    (curr['ROC17'] < 0) &
+                    (curr['ROC34'] < 0) &
+                    (curr['ROC34'] > curr['ROC17']) &
+                    (curr['ROC72'] > 0) &
+                    (curr['ROC305'] > 0)
+                )
 
                 probabilidade = ""
-                if cond_alta: probabilidade = "Alta (Caiu Comprou)"
-                elif cond_media: probabilidade = "Média"
+                if cond_alta:
+                    probabilidade = "Alta (Caiu Comprou)"
+                elif cond_media:
+                    probabilidade = "Média"
 
                 if probabilidade:
                     candidates.append({
@@ -468,11 +484,14 @@ def scan_roc_weekly(df_top_liq):
                     })
 
             except: continue
+
         return pd.DataFrame(candidates)
+
     except: return pd.DataFrame()
 
 # --- WIDGET CHART TRADINGVIEW ---
 def show_chart_widget(symbol_tv, interval="D"):
+    # Widget configurado dinamicamente. interval="W" (Semanal) ou "D" (Diario).
     html_code = f"""
     <div class="tradingview-widget-container">
       <div id="tradingview_chart"></div>
@@ -491,7 +510,11 @@ def show_chart_widget(symbol_tv, interval="D"):
         "toolbar_bg": "#f1f3f6",
         "enable_publishing": false,
         "allow_symbol_change": true,
-        "studies": ["MASimple@tv-basicstudies", "MASimple@tv-basicstudies", "MASimple@tv-basicstudies"], 
+        "studies": [
+            "MASimple@tv-basicstudies", 
+            "MASimple@tv-basicstudies",
+            "MASimple@tv-basicstudies"
+        ], 
         "container_id": "tradingview_chart"
       }});
       </script>
@@ -503,29 +526,31 @@ def show_chart_widget(symbol_tv, interval="D"):
 # INTERFACE PRINCIPAL
 # ==========================================
 
-# --- BANNER TOPO ---
+# --- BANNER TOPO (CENTRALIZADO E PEQUENO) ---
 components.html("""
     <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
         <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
     </div>
 """, height=90)
+# --------------------------------------------
 
 st.title("🇧🇷 Ranking de Ações Baratas e Rentáveis - B3")
 mes_txt, ano_int = get_current_data()
 st.markdown(f"**Referência:** {mes_txt}/{ano_int}")
 
-st.warning("⚠️ **AVISO IMPORTANTE:** As informações disponibilizadas nesta página não configuram recomendação de compra ou venda. O mercado financeiro possui riscos.")
+# --- AVISO LEGAL (NOVO) ---
+st.warning("⚠️ **AVISO IMPORTANTE:** As informações disponibilizadas nesta página não configuram recomendação de compra ou venda. O mercado financeiro possui riscos. Utilize os dados apenas para estudo e aprofunde sua análise antes de tomar qualquer decisão.")
 
 # 1. Carregamento dos Dados
 with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_weekly(df_raw) 
-    df_scan_roc = scan_roc_weekly(df_raw) 
+    df_scan_bb = scan_bollinger_weekly() # Novo Scanner BB
+    df_scan_roc = scan_roc_weekly(df_raw) # Novo Scanner ROC
 
 # --- SISTEMA DE ABAS ---
-tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Rejeição)", "🚀 Setup ROC (Caiu Comprou)"])
+tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup BB Semanal (Lower Band)", "🚀 Setup ROC (Caiu Comprou)"])
 
 # === ABA 1: CONTEÚDO ORIGINAL ===
 with tab1:
@@ -623,94 +648,122 @@ with tab1:
         else:
             st.info("Sem dividendos recentes.")
 
-# === ABA 2: SCANNER BB (TOP 200 - 2 SEMANAS - REJEIÇÃO) ===
+# === ABA 2: SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER) ===
 with tab2:
-    st.subheader("📉 Setup: Bandas de Bollinger Semanal")
-    st.markdown("""
-    **Universo:** Top 200 ações mais líquidas.
-    **Critério:** Tocou na Banda Inferior (Margem 1.5%) e FECHOU acima dela.
-    **Regra:** Se furou a banda durante a semana, **tem que ter fechado acima** (Close >= Lower).
-    """)
-    st.warning("⚠️ **Atenção:** Este padrão busca candles de rejeição/suporte na banda inferior.")
+    st.subheader("📉 Setup: Bandas de Bollinger Semanal (Lower Band)")
+    st.warning("⚠️ **Atenção:** Este filtro mostra ações tocando a banda inferior. Considere o fato de que ações em forte tendência de baixa podem continuar caindo.")
 
     col_list, col_chart = st.columns([1, 2])
 
     with col_list:
         if not df_scan_bb.empty:
-            st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
+            st.write(f"**{len(df_scan_bb)} Oportunidades:**")
+            # Usa interval="W"
             event = st.dataframe(
-                df_scan_bb[['Ativo', 'Preço (Ref)', 'Semana', 'Distância Fech %']].style.format({
-                    "Preço (Ref)": "{:.2f}", "Distância Fech %": "{:.2f}%"
-                }).map(lambda x: 'background-color: #e6fffa; color: black', subset=['Distância Fech %']),
+                df_scan_bb[['Ativo', 'Preço Atual', 'Distância Fech %']].style.format({
+                    "Preço Atual": "{:.2f}", "Distância Fech %": "{:.2f}%"
+                }).map(lambda x: 'background-color: #ffcccb; color: black', subset=['Distância Fech %']),
                 use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
             )
             if len(event.selection.rows) > 0:
                 selected_index = event.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
         else:
-            st.info("Nenhuma ação atendeu aos critérios (Tocar + Fechar Acima) nas últimas 2 semanas.")
+            st.info("Nenhuma ação brasileira encontrada tocando a banda inferior nesta semana.")
 
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO ===
+# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) ===
+# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO DE APOIO ===
 with tab3:
     st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
     st.markdown("""
-    **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback).
+    **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
+    *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
+    *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17 (ordem preservada) e acima das longas.
     """)
     
+    col_roc_list, col_roc_chart = st.columns([1, 2])
+
+    with col_roc_list:
+        if not df_scan_roc.empty:
+            st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
     # --- SISTEMA DE VERIFICAÇÃO DE CLICK NO LINK ---
     if "aba3_liberada" not in st.session_state:
         st.session_state["aba3_liberada"] = False
 
-    # === ESTADO BLOQUEADO ===
     if not st.session_state["aba3_liberada"]:
         # TELA DE BLOQUEIO
         st.markdown("### 🔒 Conteúdo Exclusivo")
-        st.warning("Para liberar o acesso, ajude o site visitando nosso patrocinador abaixo.")
+        st.warning("O **Setup ROC (Caiu Comprou)** é uma ferramenta avançada. Para ajudar o desenvolvimento e liberar o acesso, clique no botão abaixo.")
         
-        # 1. ANÚNCIO INCORPORADO NA PÁGINA (COMPONENT HTML - SCRIPT IDÊNTICO AO TOPO)
-        st.caption("👇 Clique no banner abaixo para nos apoiar:")
+        st.write("") # Espaço
         
-        # Aqui usamos components.html com o SCRIPT e não components.iframe, 
-        # para garantir que renderize exatamente como o topo da página.
-        components.html("""
-            <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
-                <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
-            </div>
-        """, height=250, scrolling=True)
-        
-        st.write("") 
-        
-        # 2. BOTÃO DE CONFIRMAÇÃO (PERGUNTA)
-        st.info("Para ver a lista, precisamos confirmar o apoio:")
-        if st.button("✅ Já abri a propaganda para apoiar o site? (Sim)", type="primary", use_container_width=True):
-            # Atualiza estado e recarrega
+        # Botão que abre o link e libera o conteúdo
+        # Ao clicar, o Python roda, seta a variavel para True, injeta o JS para abrir a aba e recarrega
+        if st.button("🚀 CLIQUE AQUI PARA APOIAR E LIBERAR O SETUP ROC", type="primary", use_container_width=True):
             st.session_state["aba3_liberada"] = True
+
+            # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
+            if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
+                st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
+
+            # Formatação condicional da coluna Probabilidade
+            def color_prob(val):
+                color = '#d4edda' if 'Alta' in val else '#fff3cd'
+                return f'background-color: {color}; color: black; font-weight: bold;'
+
+            # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
+            event_roc = st.dataframe(
+                df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
+                    "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
+                }).map(color_prob, subset=['Probabilidade']),
+                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
+                key="roc_table"
+            )
+            # Script JS invisível para abrir o link em nova aba automaticamente
+            link_apoio = "https://multicoloredsister.com/3luWVi"
+            js_open = f"<script>window.open('{link_apoio}', '_blank');</script>"
+            components.html(js_open, height=0)
+
+            # Lógica de atualização ao clicar
+            if len(event_roc.selection.rows) > 0:
+                idx_roc = event_roc.selection.rows[0]
+                st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
             st.rerun()
 
-    # === ESTADO LIBERADO ===
+        else:
+            st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
     else:
-        st.success("✅ Acesso Liberado! Obrigado pelo apoio.")
+        # --- CONTEÚDO ORIGINAL DA ABA 3 (LIBERADO) ---
+        st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
+        st.success("Acesso liberado! Obrigado pelo apoio.")
+        
+        st.markdown("""
+        **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
+        *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
+        *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17 (ordem preservada) e acima das longas.
+        """)
         
         col_roc_list, col_roc_chart = st.columns([1, 2])
 
         with col_roc_list:
             if not df_scan_roc.empty:
-                st.write(f"**{len(df_scan_roc)} Ativos Encontrados:**")
+                st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
                 
-                # 1. SELEÇÃO PADRÃO
-                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3" and len(df_scan_roc) > 0:
+                # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
+                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
                     st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
 
-                # Formatação condicional
+                # Formatação condicional da coluna Probabilidade
                 def color_prob(val):
                     color = '#d4edda' if 'Alta' in val else '#fff3cd'
                     return f'background-color: {color}; color: black; font-weight: bold;'
 
+                # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
                 event_roc = st.dataframe(
                     df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
                         "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
@@ -719,19 +772,27 @@ with tab3:
                     key="roc_table"
                 )
                 
+                # Lógica de atualização ao clicar
                 if len(event_roc.selection.rows) > 0:
                     idx_roc = event_roc.selection.rows[0]
                     st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
                 
             else:
-                st.info("Nenhuma ação atende aos critérios ROC nesta semana.")
+                st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
 
+    with col_roc_chart:
+        clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
+        st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
+        # Usa interval="D" (Diário) como solicitado
+        show_chart_widget(st.session_state.tv_symbol, interval="D")
         with col_roc_chart:
             clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
             st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
+            # Usa interval="D" (Diário) como solicitado
             show_chart_widget(st.session_state.tv_symbol, interval="D")
             
         st.divider()
         if st.button("Bloquear novamente (Reset)", key="lock_btn"):
             st.session_state["aba3_liberada"] = False
+
             st.rerun()
