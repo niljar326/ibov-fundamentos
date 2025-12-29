@@ -103,12 +103,17 @@ def clean_fundamentus_col(x):
         except: return 0.0
     return 0.0
 
-def format_short_number(val):
+# --- FORMATADOR PARA 1 CASA DECIMAL (GRÁFICO) ---
+def format_short_decimal(val):
     if pd.isna(val) or val == 0: return "0"
     abs_val = abs(val)
-    if abs_val >= 1e9: return f"{val/1e9:.1f}B"
-    elif abs_val >= 1e6: return f"{val/1e6:.0f}M"
-    return f"{val:.0f}"
+    # Se for Bilhão
+    if abs_val >= 1e9: 
+        return f"{val/1e9:.1f}B"
+    # Se for Milhão
+    elif abs_val >= 1e6: 
+        return f"{val/1e6:.1f}M"
+    return f"{val:.1f}"
 
 def get_current_data():
     now = datetime.datetime.now()
@@ -203,21 +208,22 @@ def get_risk_table(df_original):
             risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem': row['divbpatr'], 'Queda Lucro': lucro_queda_str, 'Situação': status})
     return pd.DataFrame(risk_data)
 
-# --- GRÁFICO CORRIGIDO (COM COLUNA 12M OBRIGATÓRIA) ---
+# --- GRÁFICO CORRIGIDO (VISUAL SOLICITADO) ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
         stock = yf.Ticker(ticker + ".SA")
+        
+        # 1. Coleta
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
         hist = stock.history(period="5y")
         
-        # Correção Timezone
         if not financials.empty: financials.index = pd.to_datetime(financials.index).tz_localize(None)
         if not quarterly.empty: quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
         if not hist.empty: hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
-        # Ordenar cronologicamente
+        # Ordenar (Do mais antigo para o mais novo)
         financials = financials.sort_index()
         quarterly = quarterly.sort_index()
 
@@ -239,14 +245,19 @@ def get_chart_data(ticker):
 
         data_rows = []
         
-        # 1. Dados Anuais (4 anos)
+        # 2. Dados Anuais (Últimos 4 anos completos)
+        # Se houver mais, pega só os últimos 4.
+        # Exclui ano corrente incompleto se estiver no dataframe "annual"
+        # O yfinance geralmente traz anos fechados no financials, então pegamos os últimos 4
         last_years = financials.tail(4)
+        
         for date, row in last_years.iterrows():
-            year_str = str(date.year)
+            year_str = str(date.year) # Força string para virar categoria no eixo X
             price = 0.0
             if not hist.empty:
                 mask = hist.index <= date
                 if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
+                else: price = hist['Close'].iloc[0]
             
             data_rows.append({
                 'Periodo': year_str,
@@ -255,25 +266,28 @@ def get_chart_data(ticker):
                 'Cotação': price
             })
             
-        # 2. COLUNA "ÚLTIMOS 12M" (FORÇADA AGORA)
-        # Se existirem dados trimestrais, criamos a coluna 12m, nem que seja com os dados que tem.
+        # 3. Dados TTM (Substituindo o ano atual incompleto)
+        # Calcula soma dos últimos 4 trimestres
+        has_ttm = False
+        ttm_rev = 0.0
+        ttm_inc = 0.0
+        
         if not quarterly.empty:
             q_rev_col = find_col(quarterly, rev_candidates)
             q_inc_col = find_col(quarterly, inc_candidates)
-            
             if q_rev_col and q_inc_col:
-                # Pega as últimas 4 entradas disponíveis, não importa a data exata
-                last_q = quarterly.tail(4) 
-                
-                # Soma tudo o que tiver nesses últimos trimestres
-                ttm_rev = last_q[q_rev_col].sum()
-                ttm_inc = last_q[q_inc_col].sum()
-                
-                # Preço Atual
-                curr_price = 0.0
-                if not hist.empty: curr_price = hist['Close'].iloc[-1]
-                
-                # Adiciona a linha FINALMENTE
+                last_4_quarters = quarterly.tail(4)
+                if not last_4_quarters.empty:
+                    ttm_rev = last_4_quarters[q_rev_col].sum()
+                    ttm_inc = last_4_quarters[q_inc_col].sum()
+                    has_ttm = True
+        
+        if has_ttm or len(data_rows) > 0:
+            curr_price = 0.0
+            if not hist.empty: curr_price = hist['Close'].iloc[-1]
+            
+            if has_ttm:
+                # Adiciona TTM como última coluna
                 data_rows.append({
                     'Periodo': 'Últimos 12m',
                     'Receita': ttm_rev,
@@ -282,12 +296,13 @@ def get_chart_data(ticker):
                 })
         
         df_final = pd.DataFrame(data_rows)
+        if df_final.empty: return None
+
+        # Formatação Texto (1 casa decimal)
+        df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_decimal)
+        df_final['Lucro_Texto'] = df_final['Lucro'].apply(format_short_decimal)
         
-        # Formatação Texto
-        df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
-        df_final['Lucro_Texto'] = df_final['Lucro'].apply(format_short_number)
-        
-        # Escala (Plot) em Milhões
+        # Escala Plot
         df_final['Receita_Plot'] = df_final['Receita'] / 1e6
         df_final['Lucro_Plot'] = df_final['Lucro'] / 1e6
         
@@ -465,7 +480,7 @@ with tab1:
         else: st.info("Sem alertas hoje.")
 
         st.divider()
-        st.subheader("📈 Gráfico Cotação vs Lucro/Receita")
+        st.subheader("📈 Gráfico Cotação vs Lucro/Receita (4 Anos + TTM)")
         opts = df_best['Ativo'].tolist()
         idx = opts.index('LREN3') if 'LREN3' in opts else 0
         with st.expander("🔎 Selecionar Ação", expanded=st.session_state.expander_open):
@@ -475,35 +490,36 @@ with tab1:
             if df_chart is not None:
                 fig = go.Figure()
                 
-                # EIXO Y1 (Esquerda) -> Receita (Barras)
+                # EIXO Y1 (Esquerda) -> Receita (Barras Cinzas)
                 fig.add_trace(go.Bar(
                     x=df_chart['Periodo'], 
                     y=df_chart['Receita_Plot'], 
-                    name="Receita (M)", 
-                    marker_color='#A9A9A9',
+                    name="Receita (Milhões)", 
+                    marker_color='#A9A9A9', # Cinza
+                    opacity=0.8,
                     yaxis='y1',
-                    hovertemplate='Receita: %{text}<extra></extra>',
-                    text=df_chart['Receita_Texto']
+                    text=df_chart['Receita_Texto'],
+                    textposition='outside', # Texto fora da barra (topo)
+                    hovertemplate='Receita: %{text}<extra></extra>'
                 ))
                 
-                # EIXO Y2 (Direita) -> Preço (Linha Azul)
+                # EIXO Y2 (Direita 1) -> Preço (Linha Azul Arredondada)
                 fig.add_trace(go.Scatter(
                     x=df_chart['Periodo'], 
                     y=df_chart['Cotação'], 
                     name="Preço (R$)", 
-                    line=dict(color='blue', width=3), 
+                    line=dict(color='#0000FF', width=3, shape='spline', smoothing=1.3), 
                     mode='lines+markers', 
                     yaxis='y2',
                     hovertemplate='Preço: R$ %{y:.2f}<extra></extra>'
                 ))
 
-                # EIXO Y3 (Direita - Oculto/Proporcional) -> Lucro (Linha Verde)
-                # Garante que o lucro suba proporcionalmente se houver alta, usando seu próprio eixo
+                # EIXO Y3 (Direita 2 - Oculto/Sobreposto) -> Lucro (Linha Verde Arredondada)
                 fig.add_trace(go.Scatter(
                     x=df_chart['Periodo'], 
                     y=df_chart['Lucro_Plot'], 
-                    name="Lucro Líq. (M)", 
-                    line=dict(color='green', width=3), 
+                    name="Lucro Líq. (Milhões)", 
+                    line=dict(color='#008000', width=3, dash='dot', shape='spline', smoothing=1.3), 
                     mode='lines+markers',
                     yaxis='y3',
                     hovertemplate='Lucro: %{text}<extra></extra>',
@@ -511,41 +527,46 @@ with tab1:
                 ))
                 
                 fig.update_layout(
-                    title=f"{selected}: Receita vs Lucro vs Preço (12m incluso)",
-                    xaxis=dict(title="Período"),
+                    title=f"{selected}: Receita vs Lucro vs Preço (Curto Prazo)",
+                    # Eixo X como Categoria para evitar "2022.5"
+                    xaxis=dict(title="Período", type='category'),
                     
                     # Y1: Receita (Esquerda)
                     yaxis=dict(
-                        title="Receita (Milhões R$)", 
+                        title="Receita (M)", 
                         side="left", 
-                        showgrid=True
+                        showgrid=False,
+                        color="#808080"
                     ),
                     
-                    # Y2: Preço (Direita)
+                    # Y2: Preço (Direita - Principal)
                     yaxis2=dict(
-                        title="Preço (R$)", 
+                        title="Preço da Ação (R$)", 
                         side="right", 
                         overlaying="y", 
-                        showgrid=False
+                        showgrid=True,
+                        color="#0000FF"
                     ),
                     
-                    # Y3: Lucro (Direita - Escala independente mas sobreposta)
+                    # Y3: Lucro (Direita - Secundário Invisível)
                     yaxis3=dict(
-                        title="Lucro (Milhões)",
+                        title="Lucro Líquido",
                         anchor="x",
                         overlaying="y",
                         side="right",
                         showgrid=False,
-                        showticklabels=False
+                        showticklabels=False,
+                        color="#008000"
                     ),
                     
                     hovermode="x unified",
                     height=500,
                     legend=dict(orientation="h", y=1.1, x=0),
-                    barmode='overlay'
+                    barmode='overlay',
+                    margin=dict(t=80) # Margem topo para caber labels
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            else: st.warning(f"Dados históricos indisponíveis para {selected}.")
+            else: st.warning(f"Dados históricos insuficientes para montar o gráfico de {selected}.")
 
         st.divider()
         c1, c2 = st.columns(2)
