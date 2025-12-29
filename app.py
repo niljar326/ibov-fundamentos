@@ -704,10 +704,12 @@ with tab3:
         st.subheader("🔒 Ferramenta Exclusiva Bloqueada")
         st.info("Esta ferramenta de análise avançada (Setup ROC) é gratuita, mas mantida por nossos parceiros.")
         
-        st.markdown("### 👉 Passo 1: Clique no Banner Abaixo")
-        st.write("Clique no banner abaixo para apoiar a página (abrirá na própria aba para evitar bloqueadores).")
+        st.markdown("### 👉 Apoie a página para liberar")
+        st.write("1. Clique no banner abaixo (a propaganda abrirá).")
+        st.write("2. Feche a propaganda e retorne aqui.")
+        st.write("3. Clique no botão 'Liberar Conteúdo'.")
         
-        # O BANNER SOLICITADO
+        # O BANNER SOLICITADO (CÓPIA EXATA DO TOPO)
         components.html("""
             <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
                 <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
@@ -715,8 +717,6 @@ with tab3:
         """, height=90)
         
         st.divider()
-        st.markdown("### 👉 Passo 2: Liberar o Conteúdo")
-        st.write("Após clicar no banner e fechar o anúncio, clique no botão abaixo para confirmar.")
         
         # BOTÃO PARA LIBERAR (Simulando o retorno do usuário)
         if st.button("✅ Já cliquei no banner / Liberar Conteúdo"):
@@ -725,7 +725,7 @@ with tab3:
             
     else:
         # --- CONTEÚDO ORIGINAL DA ABA 3 (EXIBIDO APÓS O CLIQUE) ---
-        st.success("Obrigado pelo seu apoio! Conteúdo liberado.")
+        st.success("Obrigado! Conteúdo liberado com sucesso.")
         
         st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
         st.markdown("""
