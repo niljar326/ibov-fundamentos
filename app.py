@@ -39,8 +39,8 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
     
-    /* Estilo para o botão de Pix */
-    div.stButton > button:first-child {
+    /* Estilo para o botão de Pix e Botões Gerais */
+    div.stButton > button {
         width: 100%;
         border-radius: 8px;
         font-weight: bold;
@@ -109,6 +109,9 @@ with st.sidebar:
 # --- Estado ---
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3" # Padrão inicial
+
+# Inicializa o estado de bloqueio da Aba 3
+if 'tab3_unlocked' not in st.session_state: st.session_state.tab3_unlocked = False
 
 def close_expander(): st.session_state.expander_open = False
 
@@ -694,49 +697,77 @@ with tab2:
         st.markdown(f"#### Gráfico Semanal: {clean_name}")
         show_chart_widget(st.session_state.tv_symbol, interval="W")
 
-# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) ===
+# === ABA 3: NOVO SCANNER ROC (EMA 17/34/72/305) COM BLOQUEIO DE BANNER ===
 with tab3:
-    st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
-    st.markdown("""
-    **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
-    *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
-    *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17 (ordem preservada) e acima das longas.
-    """)
-    
-    col_roc_list, col_roc_chart = st.columns([1, 2])
-
-    with col_roc_list:
-        if not df_scan_roc.empty:
-            st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
+    # --- LÓGICA DE BLOQUEIO / DESBLOQUEIO ---
+    if not st.session_state['tab3_unlocked']:
+        st.subheader("🔒 Ferramenta Exclusiva Bloqueada")
+        st.info("Esta ferramenta de análise avançada (Setup ROC) é gratuita, mas mantida por nossos parceiros.")
+        
+        st.markdown("### 👉 Passo 1: Clique no Banner Abaixo")
+        st.write("Clique no banner abaixo para apoiar a página (abrirá na própria aba para evitar bloqueadores).")
+        
+        # O BANNER SOLICITADO
+        components.html("""
+            <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
+                <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
+            </div>
+        """, height=90)
+        
+        st.divider()
+        st.markdown("### 👉 Passo 2: Liberar o Conteúdo")
+        st.write("Após clicar no banner e fechar o anúncio, clique no botão abaixo para confirmar.")
+        
+        # BOTÃO PARA LIBERAR (Simulando o retorno do usuário)
+        if st.button("✅ Já cliquei no banner / Liberar Conteúdo"):
+            st.session_state['tab3_unlocked'] = True
+            st.rerun()
             
-            # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
-            if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
-                st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
+    else:
+        # --- CONTEÚDO ORIGINAL DA ABA 3 (EXIBIDO APÓS O CLIQUE) ---
+        st.success("Obrigado pelo seu apoio! Conteúdo liberado.")
+        
+        st.subheader("🚀 Setup ROC: Médias Exponenciais (Semanal)")
+        st.markdown("""
+        **Conceito (Caiu Comprou):** Busca ações em tendência primária de alta (acima das EMAs 72 e 305) que fizeram um recuo (pullback) abaixo das médias curtas.
+        *   **Alta Probabilidade:** Preço abaixo da EMA17, mas acima das demais.
+        *   **Média Probabilidade:** Preço abaixo da EMA17 e EMA34, mas a EMA34 ainda está acima da EMA17 (ordem preservada) e acima das longas.
+        """)
+        
+        col_roc_list, col_roc_chart = st.columns([1, 2])
 
-            # Formatação condicional da coluna Probabilidade
-            def color_prob(val):
-                color = '#d4edda' if 'Alta' in val else '#fff3cd'
-                return f'background-color: {color}; color: black; font-weight: bold;'
+        with col_roc_list:
+            if not df_scan_roc.empty:
+                st.write(f"**{len(df_scan_roc)} Ativos Encontrados (Top Liquidez):**")
+                
+                # 1. SELEÇÃO PADRÃO: Se o estado for genérico e tivermos dados, seleciona o primeiro da lista.
+                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3":
+                    st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
 
-            # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
-            event_roc = st.dataframe(
-                df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
-                    "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
-                }).map(color_prob, subset=['Probabilidade']),
-                use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
-                key="roc_table"
-            )
-            
-            # Lógica de atualização ao clicar
-            if len(event_roc.selection.rows) > 0:
-                idx_roc = event_roc.selection.rows[0]
-                st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
-            
-        else:
-            st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
+                # Formatação condicional da coluna Probabilidade
+                def color_prob(val):
+                    color = '#d4edda' if 'Alta' in val else '#fff3cd'
+                    return f'background-color: {color}; color: black; font-weight: bold;'
 
-    with col_roc_chart:
-        clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
-        st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
-        # Usa interval="D" (Diário) como solicitado
-        show_chart_widget(st.session_state.tv_symbol, interval="D")
+                # IMPORTANTE: A key="roc_table" impede o reset para a Tab 1 ao interagir
+                event_roc = st.dataframe(
+                    df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({
+                        "Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"
+                    }).map(color_prob, subset=['Probabilidade']),
+                    use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
+                    key="roc_table"
+                )
+                
+                # Lógica de atualização ao clicar
+                if len(event_roc.selection.rows) > 0:
+                    idx_roc = event_roc.selection.rows[0]
+                    st.session_state.tv_symbol = df_scan_roc.iloc[idx_roc]['TV_Symbol']
+                
+            else:
+                st.info("Nenhuma ação do Top Liquidez atende aos critérios ROC nesta semana.")
+
+        with col_roc_chart:
+            clean_name_roc = st.session_state.tv_symbol.split(":")[-1]
+            st.markdown(f"#### Gráfico Diário: {clean_name_roc}")
+            # Usa interval="D" (Diário) como solicitado
+            show_chart_widget(st.session_state.tv_symbol, interval="D")
