@@ -103,16 +103,12 @@ def clean_fundamentus_col(x):
         except: return 0.0
     return 0.0
 
-# --- FORMATADOR PARA 1 CASA DECIMAL (GRÁFICO) ---
+# Formatação para o Gráfico (1 casa decimal)
 def format_short_decimal(val):
     if pd.isna(val) or val == 0: return "0"
     abs_val = abs(val)
-    # Se for Bilhão
-    if abs_val >= 1e9: 
-        return f"{val/1e9:.1f}B"
-    # Se for Milhão
-    elif abs_val >= 1e6: 
-        return f"{val/1e6:.1f}M"
+    if abs_val >= 1e9: return f"{val/1e9:.1f}B"
+    elif abs_val >= 1e6: return f"{val/1e6:.1f}M"
     return f"{val:.1f}"
 
 def get_current_data():
@@ -208,7 +204,7 @@ def get_risk_table(df_original):
             risk_data.append({'Ativo': ticker, 'Preço': row['cotacao'], 'Alavancagem': row['divbpatr'], 'Queda Lucro': lucro_queda_str, 'Situação': status})
     return pd.DataFrame(risk_data)
 
-# --- GRÁFICO CORRIGIDO (VISUAL SOLICITADO) ---
+# --- GRÁFICO ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
@@ -244,15 +240,16 @@ def get_chart_data(ticker):
         if not rev_col or not inc_col: return None
 
         data_rows = []
+        current_year = datetime.datetime.now().year
         
-        # 2. Dados Anuais (Últimos 4 anos completos)
-        # Se houver mais, pega só os últimos 4.
-        # Exclui ano corrente incompleto se estiver no dataframe "annual"
-        # O yfinance geralmente traz anos fechados no financials, então pegamos os últimos 4
-        last_years = financials.tail(4)
+        # 2. Dados Anuais (Últimos 4 anos completos, ignorando o ano corrente incompleto se existir)
+        # Pega até 5 últimos, filtra o ano atual, e guarda os 4 últimos válidos
+        last_years_raw = financials.tail(5)
         
-        for date, row in last_years.iterrows():
-            year_str = str(date.year) # Força string para virar categoria no eixo X
+        for date, row in last_years_raw.iterrows():
+            if date.year == current_year: continue # Pula ano atual incompleto nos anuais
+            
+            year_str = str(date.year)
             price = 0.0
             if not hist.empty:
                 mask = hist.index <= date
@@ -265,13 +262,17 @@ def get_chart_data(ticker):
                 'Lucro': row[inc_col],
                 'Cotação': price
             })
-            
-        # 3. Dados TTM (Substituindo o ano atual incompleto)
-        # Calcula soma dos últimos 4 trimestres
+        
+        # Mantém apenas os 4 últimos anos fechados
+        if len(data_rows) > 4:
+            data_rows = data_rows[-4:]
+
+        # 3. Dados TTM (Últimos 12m)
         has_ttm = False
         ttm_rev = 0.0
         ttm_inc = 0.0
         
+        # Tenta calcular via trimestral
         if not quarterly.empty:
             q_rev_col = find_col(quarterly, rev_candidates)
             q_inc_col = find_col(quarterly, inc_candidates)
@@ -282,23 +283,35 @@ def get_chart_data(ticker):
                     ttm_inc = last_4_quarters[q_inc_col].sum()
                     has_ttm = True
         
-        if has_ttm or len(data_rows) > 0:
-            curr_price = 0.0
-            if not hist.empty: curr_price = hist['Close'].iloc[-1]
-            
-            if has_ttm:
-                # Adiciona TTM como última coluna
-                data_rows.append({
-                    'Periodo': 'Últimos 12m',
-                    'Receita': ttm_rev,
-                    'Lucro': ttm_inc,
-                    'Cotação': curr_price
-                })
+        # Se falhar trimestral e tiver anual, usa dados mais recentes como fallback (opcional, para não quebrar)
+        # Mas preferimos mostrar apenas se tiver dado real.
         
+        # Adiciona coluna TTM
+        curr_price = 0.0
+        if not hist.empty: curr_price = hist['Close'].iloc[-1]
+            
+        if has_ttm:
+            data_rows.append({
+                'Periodo': 'Últimos 12m',
+                'Receita': ttm_rev,
+                'Lucro': ttm_inc,
+                'Cotação': curr_price
+            })
+        elif not has_ttm and len(data_rows) > 0:
+            # Fallback visual para GitHub/Cloud se trimestral falhar: repete último ano como estimativa
+            # apenas para ter a coluna e o preço atual
+            last_valid = data_rows[-1]
+            data_rows.append({
+                'Periodo': 'Últimos 12m (Est.)',
+                'Receita': last_valid['Receita'], 
+                'Lucro': last_valid['Lucro'],
+                'Cotação': curr_price
+            })
+
         df_final = pd.DataFrame(data_rows)
         if df_final.empty: return None
 
-        # Formatação Texto (1 casa decimal)
+        # Formatação Texto
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_decimal)
         df_final['Lucro_Texto'] = df_final['Lucro'].apply(format_short_decimal)
         
@@ -469,7 +482,15 @@ with tab1:
         if not df_best.empty:
             st.subheader("🏆 Melhores Ações")
             cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
-            styler = df_best[cols_view].style.map(lambda x: 'background-color: #f2f2f2; color: black;', subset=['Preço','P/L']).format({"Preço": "R$ {:.2f}", "P/L": "{:.2f}", "DY": "{:.2f}"})
+            # FORMATAÇÃO COM APENAS 1 CASA DECIMAL
+            styler = df_best[cols_view].style.map(lambda x: 'background-color: #f2f2f2; color: black;', subset=['Preço','P/L']).format({
+                "Preço": "R$ {:.1f}", 
+                "P/L": "{:.1f}", 
+                "DY": "{:.1f}", 
+                "ROE": "{:.1f}", 
+                "Margem Líq.": "{:.1f}",
+                "EV/EBIT": "{:.1f}"
+            })
             st.dataframe(styler, use_container_width=True, hide_index=True)
 
         st.divider()
@@ -499,7 +520,7 @@ with tab1:
                     opacity=0.8,
                     yaxis='y1',
                     text=df_chart['Receita_Texto'],
-                    textposition='outside', # Texto fora da barra (topo)
+                    textposition='outside', 
                     hovertemplate='Receita: %{text}<extra></extra>'
                 ))
                 
@@ -515,6 +536,9 @@ with tab1:
                 ))
 
                 # EIXO Y3 (Direita 2 - Oculto/Sobreposto) -> Lucro (Linha Verde Arredondada)
+                # O uso de yaxis3 permite que a linha do lucro tenha sua própria escala (autorange)
+                # garantindo que ela suba e desça visualmente proporcional ao seu próprio histórico,
+                # permitindo comparar a tendência com a linha de preço.
                 fig.add_trace(go.Scatter(
                     x=df_chart['Periodo'], 
                     y=df_chart['Lucro_Plot'], 
@@ -528,7 +552,7 @@ with tab1:
                 
                 fig.update_layout(
                     title=f"{selected}: Receita vs Lucro vs Preço (Curto Prazo)",
-                    # Eixo X como Categoria para evitar "2022.5"
+                    # TYPE CATEGORY: Impede o problema de 2022.5
                     xaxis=dict(title="Período", type='category'),
                     
                     # Y1: Receita (Esquerda)
@@ -563,7 +587,7 @@ with tab1:
                     height=500,
                     legend=dict(orientation="h", y=1.1, x=0),
                     barmode='overlay',
-                    margin=dict(t=80) # Margem topo para caber labels
+                    margin=dict(t=80) 
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else: st.warning(f"Dados históricos insuficientes para montar o gráfico de {selected}.")
