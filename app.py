@@ -702,24 +702,24 @@ with tab3:
     # --- LÓGICA DE BLOQUEIO / DESBLOQUEIO ---
     if not st.session_state['tab3_unlocked']:
         st.subheader("🔒 Ferramenta Exclusiva Bloqueada")
-        st.info("Esta ferramenta de análise avançada (Setup ROC) é gratuita, mas mantida por nossos parceiros.")
+        st.info("Para liberar esta ferramenta avançada, precisamos da sua ajuda.")
         
-        st.markdown("### 👉 Apoie a página para liberar")
-        st.write("1. Clique no banner abaixo (a propaganda abrirá).")
-        st.write("2. Feche a propaganda e retorne aqui.")
-        st.write("3. Clique no botão 'Liberar Conteúdo'.")
+        # 1. MOSTRA O BANNER PRIMEIRO (COM CONTAINER VISÍVEL e HEIGHT MAIOR)
+        st.markdown("### 👉 Passo 1: Clique no Banner Abaixo")
+        st.caption("A propaganda abrirá nesta área. Se não aparecer, desative seu bloqueador de anúncios.")
         
-        # O BANNER SOLICITADO (CÓPIA EXATA DO TOPO)
+        # O BANNER SOLICITADO (Altura aumentada para 150 para garantir renderização)
         components.html("""
-            <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
+            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; border: 1px dashed #cccccc; border-radius: 5px;">
                 <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
             </div>
-        """, height=90)
+        """, height=150)
         
         st.divider()
         
-        # BOTÃO PARA LIBERAR (Simulando o retorno do usuário)
-        if st.button("✅ Já cliquei no banner / Liberar Conteúdo"):
+        # 2. BOTÃO PARA LIBERAR (DEPOIS DO BANNER)
+        st.markdown("### 👉 Passo 2: Confirme abaixo")
+        if st.button("✅ Já cliquei no banner / Liberar Lista"):
             st.session_state['tab3_unlocked'] = True
             st.rerun()
             
