@@ -345,33 +345,34 @@ def get_market_news():
     news_items.sort(key=lambda x: x['date_obj'], reverse=True)
     return news_items[:6]
 
-# --- SCANNER BOLLINGER (SÓ BRASIL - SEMANAL - SÓ LOWER BAND) ---
+# --- SCANNER BOLLINGER (TOP 200 LIQUIDEZ - 3 SEMANAS - TOUCH WITHOUT PIERCE) ---
 @st.cache_data(ttl=600)
-def scan_bollinger_weekly():
-    # Lista de Ações Líquidas da B3
-    tickers_br = [
-        "VALE3.SA", "PETR4.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "WEGE3.SA", "PRIO3.SA", 
-        "MGLU3.SA", "HAPV3.SA", "RDOR3.SA", "SUZB3.SA", "JBSS3.SA", "RAIZ4.SA", "GGBR4.SA", "CSAN3.SA",
-        "VBBR3.SA", "B3SA3.SA", "BBSE3.SA", "CMIG4.SA", "ITSA4.SA", "BHIA3.SA", "GOLL4.SA", "AZUL4.SA", 
-        "CVCB3.SA", "USIM5.SA", "CSNA3.SA", "EMBR3.SA", "CPLE6.SA", "RADL3.SA", "EQTL3.SA", "TOTS3.SA", 
-        "RENT3.SA", "TIMS3.SA", "SBSP3.SA", "ELET3.SA", "ABEV3.SA", "ASAI3.SA", "CRFB3.SA", "MULT3.SA",
-        "CYRE3.SA", "EZTC3.SA", "MRVE3.SA", "PETZ3.SA", "SOMA3.SA", "ALPA4.SA", "LREN3.SA"
-    ]
+def scan_bollinger_weekly(df_top_liq):
+    # Pega as Top 200 mais líquidas do dataframe fundamentalista
+    if df_top_liq.empty: return pd.DataFrame()
+
+    # Ordena por liquidez e pega top 200
+    top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
+
+    # Adiciona sufixo .SA
+    tickers_sa = [t + ".SA" for t in top_tickers]
 
     candidates = []
 
     try:
-        # Baixa dados SEMANAIS ('1wk') dos últimos 2 anos (necessário para calcular SMA 20 semanas)
-        data = yf.download(tickers_br, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
+        # Baixa dados SEMANAIS ('1wk') de 1 ano
+        # Precisamos de histórico para a SMA20 e pelo menos 3 semanas de dados recentes
+        data = yf.download(tickers_sa, period="1y", interval="1wk", group_by='ticker', progress=False, threads=True)
 
-        for t in tickers_br:
+        for t in tickers_sa:
+            clean_ticker = t.replace(".SA", "")
             try:
                 df_t = data[t].copy() if t in data else pd.DataFrame()
                 if df_t.empty: continue
 
                 # Limpeza
                 df_t.dropna(subset=['Close'], inplace=True)
-                if len(df_t) < 22: continue # Precisa de histórico para a média
+                if len(df_t) < 22: continue # Precisa de histórico para a média + semanas recentes
 
                 # Cálculo Bandas Bollinger (20, 2)
                 # Basis = SMA 20
@@ -381,34 +382,44 @@ def scan_bollinger_weekly():
                 # Lower Band = Basis - 2 * StdDev
                 df_t['Lower'] = df_t['SMA20'] - (2.0 * df_t['STD20'])
 
-                # Pega a vela ATUAL (Semana corrente)
-                curr = df_t.iloc[-1]
-
-                # CRITÉRIO: "Tocou a banda inferior SEM FURÁ-LA"
-                # 1. Não furou: A mínima (Low) é MAIOR ou IGUAL à banda inferior (Lower).
-                # 2. Tocou: A mínima (Low) chegou muito perto. (Usando 1.5% de tolerância acima da banda).
+                # Precisamos checar as últimas 3 velas: 
+                # iloc[-1] (Atual), iloc[-2] (Semana passada), iloc[-3] (Retrasada)
                 
-                low_price = curr['Low']
-                lower_band = curr['Lower']
+                # Vamos iterar de 1 a 3 (índices negativos)
+                periodos = {1: "Atual", 2: "-1 Sem", 3: "-2 Sem"}
+                encontrou = False
+                
                 tolerancia = 1.015 # 1.5%
 
-                nao_furou = low_price >= lower_band
-                tocou = low_price <= (lower_band * tolerancia)
+                for i in range(1, 4):
+                    try:
+                        candle = df_t.iloc[-i]
+                        low_price = candle['Low']
+                        lower_band = candle['Lower']
 
-                if nao_furou and tocou:
-                    clean_ticker = t.replace(".SA", "")
+                        # CRITÉRIO: "Tocou a banda inferior SEM FURÁ-LA"
+                        # 1. Não furou: A mínima (Low) é MAIOR ou IGUAL à banda inferior (Lower).
+                        # 2. Tocou: A mínima (Low) chegou muito perto. (1.5% de tolerância).
+                        
+                        nao_furou = low_price >= lower_band
+                        tocou = low_price <= (lower_band * tolerancia)
 
-                    # Distância positiva pois está acima da banda
-                    dist = ((curr['Close'] - lower_band) / lower_band) * 100
-
-                    candidates.append({
-                        'Ativo': clean_ticker,
-                        'Preço Atual': curr['Close'],
-                        'Mínima Sem.': low_price,
-                        'Banda Inf': lower_band,
-                        'Distância Fech %': dist,
-                        'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
-                    })
+                        if nao_furou and tocou:
+                            # Calculamos a distância baseada na vela que disparou o sinal
+                            dist = ((candle['Close'] - lower_band) / lower_band) * 100
+                            
+                            candidates.append({
+                                'Ativo': clean_ticker,
+                                'Preço (Ref)': candle['Close'],
+                                'Semana': periodos[i],
+                                'Distância Fech %': dist,
+                                'TV_Symbol': f"BMFBOVESPA:{clean_ticker}"
+                            })
+                            encontrou = True
+                            break # Se encontrou na semana mais recente (ou na ordem), para de olhar as anteriores para este ativo
+                    except:
+                        continue
+                        
             except: continue
 
         return pd.DataFrame(candidates)
@@ -557,7 +568,7 @@ with st.spinner('Processando dados do mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_weekly() # Novo Scanner BB
+    df_scan_bb = scan_bollinger_weekly(df_raw) # AGORA PASSA O DF_RAW PARA PEGAR AS TOP 200
     df_scan_roc = scan_roc_weekly(df_raw) # Novo Scanner ROC
 
 # --- SISTEMA DE ABAS ---
@@ -659,21 +670,25 @@ with tab1:
         else:
             st.info("Sem dividendos recentes.")
 
-# === ABA 2: SCANNER BB (SÓ BRASIL - SEMANAL - SÓ LOWER - SEM FURAR) ===
+# === ABA 2: SCANNER BB (TOP 200 - 3 SEMANAS - TOUCH WITHOUT PIERCE) ===
 with tab2:
     st.subheader("📉 Setup: Bandas de Bollinger Semanal")
-    st.markdown("**Critério:** Preço Mínimo (Low) tocou na Banda Inferior (Margem 1.5%) mas **NÃO furou** (Low >= Banda Inferior).")
-    st.warning("⚠️ **Atenção:** Este padrão sugere um respeito ao suporte da banda, mas confirme com outros indicadores.")
+    st.markdown("""
+    **Universo:** Top 200 ações mais líquidas da Bolsa.
+    **Critério:** Preço Mínimo (Low) tocou na Banda Inferior (Margem 1.5%) mas **NÃO furou** (Low >= Banda Inferior).
+    **Período:** Ocorrência na semana atual, semana passada ou retrasada.
+    """)
+    st.warning("⚠️ **Atenção:** Este padrão sugere respeito ao suporte da banda.")
 
     col_list, col_chart = st.columns([1, 2])
 
     with col_list:
         if not df_scan_bb.empty:
-            st.write(f"**{len(df_scan_bb)} Oportunidades:**")
+            st.write(f"**{len(df_scan_bb)} Oportunidades Encontradas:**")
             # Usa interval="W"
             event = st.dataframe(
-                df_scan_bb[['Ativo', 'Preço Atual', 'Distância Fech %']].style.format({
-                    "Preço Atual": "{:.2f}", "Distância Fech %": "{:.2f}%"
+                df_scan_bb[['Ativo', 'Preço (Ref)', 'Semana', 'Distância Fech %']].style.format({
+                    "Preço (Ref)": "{:.2f}", "Distância Fech %": "{:.2f}%"
                 }).map(lambda x: 'background-color: #e6fffa; color: black', subset=['Distância Fech %']),
                 use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
             )
@@ -681,7 +696,7 @@ with tab2:
                 selected_index = event.selection.rows[0]
                 st.session_state.tv_symbol = df_scan_bb.iloc[selected_index]['TV_Symbol']
         else:
-            st.info("Nenhuma ação tocou a banda inferior sem furá-la nesta semana.")
+            st.info("Nenhuma das Top 200 ações tocou a banda inferior (sem furar) nas últimas 3 semanas.")
 
     with col_chart:
         clean_name = st.session_state.tv_symbol.split(":")[-1]
@@ -707,27 +722,22 @@ with tab3:
         
         st.write("") # Espaço
         
-        # Botão que abre o link e libera o conteúdo
+        # Botão que abre o link (Embedado) e libera o conteúdo
         if st.button("🚀 LIBERAR ACESSO (Ver Lista e Gráfico)", type="primary", use_container_width=True):
             # 1. Atualiza estado
             st.session_state["aba3_liberada"] = True
-            
-            # 2. Script JS invisível para abrir o link em nova aba automaticamente
-            link_apoio = "https://multicoloredsister.com/3luWVi"
-            
-            js_open = f"""
-            <script>
-                window.open('{link_apoio}', '_blank');
-            </script>
-            """
-            components.html(js_open, height=0)
-
-            # 3. Recarrega a página para remover o bloqueio visualmente
             st.rerun()
 
     # === ESTADO LIBERADO ===
     else:
         st.success("✅ Acesso Liberado!")
+        
+        # --- ÁREA DO ANÚNCIO (EMBEDADO PARA EVITAR POPUP BLOCKER) ---
+        st.caption("Patrocinador:")
+        # O iframe cria o espaço na página
+        link_anuncio = "https://www.effectivegatecpm.com/urh5xq8n0z?key=9955f3da10b40520963a94897a1f8d7d"
+        components.iframe(link_anuncio, height=250, scrolling=True)
+        # ------------------------------------------------------------
         
         col_roc_list, col_roc_chart = st.columns([1, 2])
 
