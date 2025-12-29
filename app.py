@@ -109,6 +109,35 @@ except:
 
 # --- BARRA LATERAL ---
 with st.sidebar:
+    # --- NOVO: BOTÃO WHATSAPP GIGA+ ---
+    whatsapp_number = "552220410353"
+    whatsapp_msg = "Use o codigo DVT329 e ganhe 20% nas duas primeiras mensalidades"
+    whatsapp_url = f"https://wa.me/{whatsapp_number}?text={whatsapp_msg.replace(' ', '%20')}"
+    
+    st.markdown(f"""
+        <a href="{whatsapp_url}" target="_blank" style="text-decoration: none;">
+            <div style="
+                background-color: #25D366; 
+                padding: 12px; 
+                border-radius: 10px; 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                gap: 10px; 
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2); 
+                margin-bottom: 20px;
+                transition: transform 0.2s;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12.0117 2C6.50574 2 2.02344 6.47837 2.02344 11.9841C2.02344 13.7432 2.48045 15.4608 3.36889 16.9982L2 22L7.1264 20.6558C8.59864 21.4589 10.2798 21.8805 11.9839 21.8805H12.0089C17.5149 21.8805 21.9953 17.4022 21.9953 11.8965C21.9953 9.25595 20.9666 6.77209 19.098 4.90706C17.2295 3.04204 14.7438 2.01235 12.0117 2Z"/>
+                </svg>
+                <div style="color: white; font-weight: bold; font-size: 14px; line-height: 1.2;">
+                    Ganhe 20% OFF<br>Giga+ Fibra!
+                </div>
+            </div>
+        </a>
+    """, unsafe_allow_html=True)
+    # ----------------------------------
+
     st.header("📊 Estatísticas")
     st.metric(label="Visitantes Únicos", value=total_visitantes)
     st.divider()
@@ -217,7 +246,7 @@ def get_risk_table(df_original):
             })
     return pd.DataFrame(risk_data)
 
-# --- Gráfico ---
+# --- Lógica do Gráfico ---
 @st.cache_data(ttl=3600*24)
 def get_chart_data(ticker):
     try:
@@ -225,47 +254,68 @@ def get_chart_data(ticker):
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
         hist = stock.history(period="5y")
-        if not financials.empty: financials.index = pd.to_datetime(financials.index).tz_localize(None)
-        if not quarterly.empty: quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
-        if not hist.empty: hist.index = pd.to_datetime(hist.index).tz_localize(None)
+        
+        if not financials.empty: 
+            financials.index = pd.to_datetime(financials.index).tz_localize(None)
+            financials = financials.sort_index()
+        if not quarterly.empty: 
+            quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
+            quarterly = quarterly.sort_index()
+        if not hist.empty: 
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
         def find_col(df, candidates):
+            cols = [c for c in df.columns]
             for cand in candidates:
-                for col in df.columns:
-                    if cand.lower() in col.lower(): return col
+                for col in cols:
+                    if cand.lower() == col.lower() or cand.lower() in col.lower():
+                        return col
             return None
 
-        rev_col = find_col(financials, ['Total Revenue', 'Revenue', 'Receita'])
-        inc_col = find_col(financials, ['Net Income', 'Lucro'])
+        rev_candidates = ['Total Revenue', 'Operating Revenue', 'Revenue', 'Receita Total']
+        inc_candidates = ['Net Income', 'Net Income Common', 'Net Income Continuous', 'Lucro Liquido']
+
+        if financials.empty: return None
+
+        rev_col = find_col(financials, rev_candidates)
+        inc_col = find_col(financials, inc_candidates)
+        
         if not rev_col or not inc_col: return None
 
         data_rows = []
-        for date, row in financials.tail(3).iterrows():
+        last_3_years = financials.tail(3)
+        for date, row in last_3_years.iterrows():
             year_str = str(date.year)
             price = 0.0
             if not hist.empty:
                 df_yr = hist[hist.index.year == date.year]
                 if not df_yr.empty: price = df_yr['Close'].iloc[-1]
+                else:
+                    mask = hist.index <= date
+                    if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
             data_rows.append({'Periodo': year_str, 'Receita': row[rev_col], 'Lucro': row[inc_col], 'Cotação': price})
             
         ttm_rev, ttm_inc, has_ttm = 0, 0, False
         if not quarterly.empty:
-            last_q = quarterly.tail(4)
-            q_rev = find_col(quarterly, ['Total Revenue', 'Revenue'])
-            q_inc = find_col(quarterly, ['Net Income', 'Lucro'])
-            if q_rev and q_inc:
-                ttm_rev = last_q[q_rev].sum()
-                ttm_inc = last_q[q_inc].sum()
+            q_limit = min(4, len(quarterly))
+            last_q = quarterly.tail(q_limit)
+            q_rev_col = find_col(quarterly, rev_candidates)
+            q_inc_col = find_col(quarterly, inc_candidates)
+            if q_rev_col and q_inc_col:
+                ttm_rev = last_q[q_rev_col].sum()
+                ttm_inc = last_q[q_inc_col].sum()
                 has_ttm = True
         
         if has_ttm:
-            curr_price = hist['Close'].iloc[-1] if not hist.empty else 0.0
-            data_rows.append({'Periodo': '12m', 'Receita': ttm_rev, 'Lucro': ttm_inc, 'Cotação': curr_price})
+            curr_price = 0.0
+            if not hist.empty: curr_price = hist['Close'].iloc[-1]
+            data_rows.append({'Periodo': 'Últimos 12m', 'Receita': ttm_rev, 'Lucro': ttm_inc, 'Cotação': curr_price})
         
         df_final = pd.DataFrame(data_rows)
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_number)
         return df_final
     except: return None
+
 
 # --- Dividendos ---
 @st.cache_data(ttl=3600*6)
