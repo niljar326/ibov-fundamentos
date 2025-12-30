@@ -1,30 +1,5 @@
 import streamlit as st
 import streamlit.components.v1 as components 
-
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
-    layout="wide",
-    page_icon="🇧🇷"
-)
-
-# --- 2. GERENCIAMENTO DE ESTADO ---
-if 'access_key_tab1_vFinal' not in st.session_state: st.session_state.access_key_tab1_vFinal = False
-if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key_tab3_vFinal = False
-if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
-if 'expander_open' not in st.session_state: st.session_state.expander_open = True
-
-# --- ID DO VISITANTE (CORREÇÃO DO CONTADOR) ---
-# Gera um ID único apenas se não existir na sessão atual. 
-# Isso impede que o ID mude quando o usuário clica em botões.
-if 'visitor_id' not in st.session_state:
-    st.session_state.visitor_id = str(uuid.uuid4())
-
-def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
-def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
-def close_expander(): st.session_state.expander_open = False
-
-# --- IMPORTS ---
 import pandas as pd
 import plotly.graph_objects as go
 import feedparser
@@ -34,12 +9,37 @@ from datetime import timedelta
 from time import mktime
 import json
 import os
-import uuid
+import uuid # Importado aqui no topo para corrigir o erro
 
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(
+    page_title="Melhores Ações Ibovespa 2025 | Ranking Fundamentalista e Dividendos",
+    layout="wide",
+    page_icon="🇧🇷"
+)
+
+# Tenta importar fundamentus (tratamento de erro mantido)
 try: import fundamentus
 except ImportError:
     st.error("Biblioteca 'fundamentus' não encontrada.")
     st.stop()
+
+# --- 2. GERENCIAMENTO DE ESTADO ---
+if 'access_key_tab1_vFinal' not in st.session_state: st.session_state.access_key_tab1_vFinal = False
+if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key_tab3_vFinal = False
+if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
+if 'expander_open' not in st.session_state: st.session_state.expander_open = True
+if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
+
+# --- ID DO VISITANTE (CORREÇÃO DO CONTADOR) ---
+# Agora funciona pois o 'uuid' já foi importado no topo
+if 'visitor_id' not in st.session_state:
+    st.session_state.visitor_id = str(uuid.uuid4())
+
+def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
+def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
+def liberar_acesso(): st.session_state.app_liberado = True
+def close_expander(): st.session_state.expander_open = False
 
 # --- CSS ---
 st.markdown("""
@@ -133,16 +133,24 @@ def get_current_data():
     now = datetime.datetime.now()
     return now.strftime("%B"), now.year
 
-# --- FUNÇÃO BANNERS ---
-def show_affiliate_banners():
-    st.divider()
+# --- TELA DE BLOQUEIO (ADS) ---
+def show_lock_screen():
+    st.info("🔒 **Conteúdo Bloqueado:** Para visualizar os Rankings e Gráficos, por favor interaja com os parceiros abaixo.")
+    
+    # Script da Propaganda (EffectiveGate)
+    components.html("""
+        <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; border: 1px dashed #ccc; background-color: #fafafa;">
+            <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
+        </div>
+    """, height=160)
+    
+    # Banners de Afiliados
     col_ad1, col_ad2 = st.columns(2)
     with col_ad1:
         st.markdown("""
         <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
             <h4 style="margin-top:0; color: #333;">✈️ Nomad: Taxa Zero em Dólar</h4>
-            <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão (até US$ 1.000) para investir nos EUA.</p>
-            <p style="font-size: 14px;">Código: <code style="background-color: #eee; padding: 4px; border-radius: 4px; border: 1px solid #ddd; font-weight:bold;">Y39FP3XF8I</code></p>
+            <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão.</p>
             <div style="text-align:center;"><a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">➡️ <b>Abrir Conta Nomad</b></a></div>
         </div>
         """, unsafe_allow_html=True)
@@ -150,10 +158,13 @@ def show_affiliate_banners():
         st.markdown("""
         <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
             <h4 style="margin-top:0; color: #009ee3;">🤝 Mercado Pago: R$ 30 OFF</h4>
-            <p style="font-size: 14px;">Use o app pela primeira vez (pagamento mín. R$ 70) e ganhe <b>R$ 30 de desconto</b>.</p>
+            <p style="font-size: 14px;">Ganhe <b>R$ 30 de desconto</b>.</p>
             <div style="text-align:center;"><a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">➡️ <b>Resgatar R$ 30</b></a></div>
         </div>
         """, unsafe_allow_html=True)
+    
+    st.write("")
+    st.button("🔓 Já visitei o anúncio / LIBERAR SITE", type="primary", on_click=liberar_acesso)
 
 # --- DADOS PRINCIPAIS ---
 @st.cache_data(ttl=3600*6)
@@ -397,7 +408,7 @@ def scan_bollinger_weekly_central(df_base):
 def scan_roc_weekly(df_top_liq):
     if df_top_liq.empty: return pd.DataFrame()
     try:
-        # AUMENTO DO RANGE DE 90 PARA 200 PARA COMPENSAR FLUTUAÇÃO DE LIQUIDEZ E ACHAR MAIS PAPEIS
+        # AUMENTO DO RANGE DE 90 PARA 200
         top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
         tickers_sa = [t + ".SA" for t in top_tickers]
         candidates = []
@@ -455,6 +466,7 @@ def show_chart_widget(symbol_tv, interval="D"):
 # INTERFACE
 # ==========================================
 
+# Banner Superior
 components.html("""
     <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
         <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
@@ -477,19 +489,15 @@ tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup Média 2
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
-    if not st.session_state.access_key_tab1_vFinal:
-        st.info("🔒 **Lista Protegida:** Clique no banner abaixo para liberar.")
-        components.html("""
-            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; border: 1px dashed #ccc;">
-                <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
-            </div>
-        """, height=130)
-        st.button("🔓 Já cliquei no banner / Liberar Lista", on_click=unlock_tab1)
+    
+    # LÓGICA DE BLOQUEIO
+    if not st.session_state.app_liberado:
+        show_lock_screen()
     else:
         if not df_best.empty:
             st.subheader("🏆 Melhores Ações")
             cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
-            # FORMATAÇÃO: Preço com 2 casas, demais com 1 casa
+            # FORMATAÇÃO: Preço 2 casas, resto 1 casa
             styler = df_best[cols_view].style.map(lambda x: 'background-color: #f2f2f2; color: black;', subset=['Preço','P/L']).format({
                 "Preço": "R$ {:.2f}", 
                 "P/L": "{:.1f}", 
@@ -505,7 +513,7 @@ with tab1:
         st.caption("ℹ️ Cálculo da Alavancagem: Dívida Bruta ÷ Patrimônio Líquido. (Acima de 3 indica alto endividamento).")
         
         if not df_warning.empty:
-            # FORMATAÇÃO: Alavancagem sem casas decimais ({:.0f})
+            # FORMATAÇÃO: Alavancagem inteiro
             styler_risk = df_warning.style.map(lambda v: 'color: red;' if '-' in str(v) else '', subset=['Queda Lucro']).format({
                 "Preço": "R$ {:.2f}",
                 "Alavancagem": "{:.0f}"
@@ -524,12 +532,12 @@ with tab1:
             if df_chart is not None:
                 fig = go.Figure()
                 
-                # EIXO Y1 (Esquerda) -> Receita (Barras Cinzas)
+                # EIXO Y1: Receita (Esq)
                 fig.add_trace(go.Bar(
                     x=df_chart['Periodo'], 
                     y=df_chart['Receita'], 
                     name="Receita", 
-                    marker_color='#A9A9A9', # Cinza
+                    marker_color='#A9A9A9', 
                     opacity=0.8,
                     yaxis='y1',
                     text=df_chart['Receita_Texto'],
@@ -537,7 +545,7 @@ with tab1:
                     hovertemplate='Receita: %{text}<extra></extra>'
                 ))
                 
-                # EIXO Y2 (Direita 1) -> Preço (Linha Azul Arredondada)
+                # EIXO Y2: Preço (Dir)
                 fig.add_trace(go.Scatter(
                     x=df_chart['Periodo'], 
                     y=df_chart['Cotação'], 
@@ -548,7 +556,7 @@ with tab1:
                     hovertemplate='Preço: R$ %{y:.2f}<extra></extra>'
                 ))
 
-                # EIXO Y3 (Direita 2 - Oculto/Sobreposto) -> Lucro (Linha Verde Arredondada)
+                # EIXO Y3: Lucro (Dir-2)
                 fig.add_trace(go.Scatter(
                     x=df_chart['Periodo'], 
                     y=df_chart['Lucro'], 
@@ -563,36 +571,9 @@ with tab1:
                 fig.update_layout(
                     title=f"{selected}: Receita vs Lucro vs Preço (Curto Prazo)",
                     xaxis=dict(title="Período", type='category'),
-                    
-                    # Y1: Receita (Esquerda)
-                    yaxis=dict(
-                        title="Receita", 
-                        side="left", 
-                        showgrid=False,
-                        color="#808080",
-                        showticklabels=False 
-                    ),
-                    
-                    # Y2: Preço (Direita - Principal)
-                    yaxis2=dict(
-                        title="Preço (R$)", 
-                        side="right", 
-                        overlaying="y", 
-                        showgrid=True,
-                        color="#0000FF"
-                    ),
-                    
-                    # Y3: Lucro (Direita - Secundário Invisível)
-                    yaxis3=dict(
-                        title="Lucro",
-                        anchor="x",
-                        overlaying="y",
-                        side="right",
-                        showgrid=False,
-                        showticklabels=False,
-                        color="#008000"
-                    ),
-                    
+                    yaxis=dict(title="Receita", side="left", showgrid=False, color="#808080", showticklabels=False),
+                    yaxis2=dict(title="Preço (R$)", side="right", overlaying="y", showgrid=True, color="#0000FF"),
+                    yaxis3=dict(title="Lucro", anchor="x", overlaying="y", side="right", showgrid=False, showticklabels=False, color="#008000"),
                     hovermode="x unified",
                     height=500,
                     legend=dict(orientation="h", y=1.1, x=0),
@@ -614,41 +595,34 @@ with tab1:
                 df_d['Valor'] = df_d['Valor'].apply(lambda x: f"R$ {x:.4f}")
                 df_d['Data'] = df_d['Data'].dt.strftime('%d/%m/%Y')
                 st.dataframe(df_d, hide_index=True)
-    
-    # Banners no fim da aba 1
-    show_affiliate_banners()
 
 with tab2:
     st.subheader("📉 Setup: Pullback na Média de 20 (Semanal)")
     st.markdown("**Critérios:** Top 300 Liquidez | Mínima tocou Média 20 | Fechou Acima da Média.")
-    col_list, col_chart = st.columns([1, 2])
-    with col_list:
-        if not df_scan_bb.empty:
-            st.write(f"**{len(df_scan_bb)} Ativos:**")
-            event = st.dataframe(df_scan_bb[['Ativo', 'Setup', 'Preço Atual', 'Dist. Média %']].style.format({"Preço Atual": "{:.2f}", "Dist. Média %": "{:.2f}%"}), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
-            if len(event.selection.rows) > 0: st.session_state.tv_symbol = df_scan_bb.iloc[event.selection.rows[0]]['TV_Symbol']
-        else: st.info("Sem sinais.")
-    with col_chart:
-        clean = st.session_state.tv_symbol.split(":")[-1]
-        st.markdown(f"#### {clean} (Semanal)")
-        show_chart_widget(st.session_state.tv_symbol, interval="W")
     
-    # Banners no fim da aba 2
-    show_affiliate_banners()
+    # LÓGICA DE BLOQUEIO
+    if not st.session_state.app_liberado:
+        show_lock_screen()
+    else:
+        col_list, col_chart = st.columns([1, 2])
+        with col_list:
+            if not df_scan_bb.empty:
+                st.write(f"**{len(df_scan_bb)} Ativos:**")
+                event = st.dataframe(df_scan_bb[['Ativo', 'Setup', 'Preço Atual', 'Dist. Média %']].style.format({"Preço Atual": "{:.2f}", "Dist. Média %": "{:.2f}%"}), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+                if len(event.selection.rows) > 0: st.session_state.tv_symbol = df_scan_bb.iloc[event.selection.rows[0]]['TV_Symbol']
+            else: st.info("Sem sinais.")
+        with col_chart:
+            clean = st.session_state.tv_symbol.split(":")[-1]
+            st.markdown(f"#### {clean} (Semanal)")
+            show_chart_widget(st.session_state.tv_symbol, interval="W")
 
 with tab3:
-    if not st.session_state.access_key_tab3_vFinal:
-        st.warning("🔒 Conteúdo Bloqueado")
-        st.info("Para liberar o Setup ROC, clique no banner abaixo.")
-        components.html("""
-            <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; border: 1px dashed #ccc;">
-                <script src="https://pl28325401.effectivegatecpm.com/1a/83/79/1a8379a4a8ddb94a327a5797257a9f02.js"></script>
-            </div>
-        """, height=130)
-        st.button("🔓 Já cliquei no banner / Liberar Acesso", on_click=unlock_tab3)
+    st.subheader("🚀 Setup ROC")
+    
+    # LÓGICA DE BLOQUEIO
+    if not st.session_state.app_liberado:
+        show_lock_screen()
     else:
-        st.success("Liberado!")
-        st.subheader("🚀 Setup ROC")
         col_roc_list, col_roc_chart = st.columns([1, 2])
         with col_roc_list:
             if not df_scan_roc.empty:
@@ -661,6 +635,3 @@ with tab3:
             clean = st.session_state.tv_symbol.split(":")[-1]
             st.markdown(f"#### {clean} (Diário)")
             show_chart_widget(st.session_state.tv_symbol, interval="D")
-    
-    # Banners no fim da aba 3
-    show_affiliate_banners()
