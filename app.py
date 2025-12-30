@@ -109,6 +109,7 @@ def format_short_decimal(val):
     abs_val = abs(val)
     if abs_val >= 1e9: return f"{val/1e9:.1f}B"
     elif abs_val >= 1e6: return f"{val/1e6:.1f}M"
+    elif abs_val >= 1e3: return f"{val/1e3:.1f}K"
     return f"{val:.1f}"
 
 def get_current_data():
@@ -210,11 +211,12 @@ def get_chart_data(ticker):
     try:
         stock = yf.Ticker(ticker + ".SA")
         
-        # 1. Coleta
+        # 1. Coleta dos Dataframes
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
         hist = stock.history(period="5y")
         
+        # Ajuste de Fuso Horário
         if not financials.empty: financials.index = pd.to_datetime(financials.index).tz_localize(None)
         if not quarterly.empty: quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
         if not hist.empty: hist.index = pd.to_datetime(hist.index).tz_localize(None)
@@ -223,6 +225,7 @@ def get_chart_data(ticker):
         financials = financials.sort_index()
         quarterly = quarterly.sort_index()
 
+        # Função auxiliar para encontrar colunas
         def find_col(df, candidates):
             cols_str = [str(c) for c in df.columns]
             for cand in candidates:
@@ -242,19 +245,19 @@ def get_chart_data(ticker):
         data_rows = []
         current_year = datetime.datetime.now().year
         
-        # 2. Dados Anuais (Últimos 4 anos completos, ignorando o ano corrente incompleto se existir)
-        # Pega até 5 últimos, filtra o ano atual, e guarda os 4 últimos válidos
-        last_years_raw = financials.tail(5)
+        # 2. Dados Anuais (Pegar os 4 últimos anos fechados, excluindo o corrente)
+        past_years = financials[financials.index.year < current_year]
+        last_4_years = past_years.tail(4)
         
-        for date, row in last_years_raw.iterrows():
-            if date.year == current_year: continue # Pula ano atual incompleto nos anuais
-            
+        for date, row in last_4_years.iterrows():
             year_str = str(date.year)
             price = 0.0
             if not hist.empty:
                 mask = hist.index <= date
-                if mask.any(): price = hist.loc[mask, 'Close'].iloc[-1]
-                else: price = hist['Close'].iloc[0]
+                if mask.any(): 
+                    price = hist.loc[mask, 'Close'].iloc[-1]
+                else: 
+                    price = hist['Close'].iloc[0]
             
             data_rows.append({
                 'Periodo': year_str,
@@ -262,31 +265,22 @@ def get_chart_data(ticker):
                 'Lucro': row[inc_col],
                 'Cotação': price
             })
-        
-        # Mantém apenas os 4 últimos anos fechados
-        if len(data_rows) > 4:
-            data_rows = data_rows[-4:]
 
-        # 3. Dados TTM (Últimos 12m)
-        has_ttm = False
+        # 3. Dados TTM (Últimos 12m - Soma dos últimos 4 trimestres) e Cotação Atual
         ttm_rev = 0.0
         ttm_inc = 0.0
+        has_ttm = False
         
-        # Tenta calcular via trimestral
         if not quarterly.empty:
             q_rev_col = find_col(quarterly, rev_candidates)
             q_inc_col = find_col(quarterly, inc_candidates)
             if q_rev_col and q_inc_col:
                 last_4_quarters = quarterly.tail(4)
-                if not last_4_quarters.empty:
+                if len(last_4_quarters) == 4:
                     ttm_rev = last_4_quarters[q_rev_col].sum()
                     ttm_inc = last_4_quarters[q_inc_col].sum()
                     has_ttm = True
         
-        # Se falhar trimestral e tiver anual, usa dados mais recentes como fallback (opcional, para não quebrar)
-        # Mas preferimos mostrar apenas se tiver dado real.
-        
-        # Adiciona coluna TTM
         curr_price = 0.0
         if not hist.empty: curr_price = hist['Close'].iloc[-1]
             
@@ -297,27 +291,22 @@ def get_chart_data(ticker):
                 'Lucro': ttm_inc,
                 'Cotação': curr_price
             })
-        elif not has_ttm and len(data_rows) > 0:
-            # Fallback visual para GitHub/Cloud se trimestral falhar: repete último ano como estimativa
-            # apenas para ter a coluna e o preço atual
-            last_valid = data_rows[-1]
-            data_rows.append({
-                'Periodo': 'Últimos 12m (Est.)',
-                'Receita': last_valid['Receita'], 
-                'Lucro': last_valid['Lucro'],
-                'Cotação': curr_price
-            })
+        else:
+            if len(data_rows) > 0:
+                last_valid = data_rows[-1]
+                data_rows.append({
+                    'Periodo': 'Últimos 12m',
+                    'Receita': last_valid['Receita'], 
+                    'Lucro': last_valid['Lucro'],
+                    'Cotação': curr_price
+                })
 
         df_final = pd.DataFrame(data_rows)
         if df_final.empty: return None
 
-        # Formatação Texto
+        # Formatação Texto (1 casa decimal)
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_decimal)
         df_final['Lucro_Texto'] = df_final['Lucro'].apply(format_short_decimal)
-        
-        # Escala Plot
-        df_final['Receita_Plot'] = df_final['Receita'] / 1e6
-        df_final['Lucro_Plot'] = df_final['Lucro'] / 1e6
         
         return df_final
     except Exception as e:
@@ -391,7 +380,8 @@ def scan_bollinger_weekly_central(df_base):
 def scan_roc_weekly(df_top_liq):
     if df_top_liq.empty: return pd.DataFrame()
     try:
-        top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(90)['papel'].tolist()
+        # AUMENTO DO RANGE DE 90 PARA 200 PARA COMPENSAR FLUTUAÇÃO DE LIQUIDEZ E ACHAR MAIS PAPEIS
+        top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
         tickers_sa = [t + ".SA" for t in top_tickers]
         candidates = []
     except: return pd.DataFrame()
@@ -482,9 +472,9 @@ with tab1:
         if not df_best.empty:
             st.subheader("🏆 Melhores Ações")
             cols_view = ['Ativo', 'Preço', 'EV/EBIT', 'P/L', 'ROE', 'DY', 'Margem Líq.']
-            # FORMATAÇÃO COM APENAS 1 CASA DECIMAL
+            # FORMATAÇÃO: Preço com 2 casas, demais com 1 casa
             styler = df_best[cols_view].style.map(lambda x: 'background-color: #f2f2f2; color: black;', subset=['Preço','P/L']).format({
-                "Preço": "R$ {:.1f}", 
+                "Preço": "R$ {:.2f}", 
                 "P/L": "{:.1f}", 
                 "DY": "{:.1f}", 
                 "ROE": "{:.1f}", 
@@ -495,8 +485,14 @@ with tab1:
 
         st.divider()
         st.subheader("⚠️ Empresas em Risco")
+        st.caption("ℹ️ Cálculo da Alavancagem: Dívida Bruta ÷ Patrimônio Líquido. (Acima de 3 indica alto endividamento).")
+        
         if not df_warning.empty:
-            styler_risk = df_warning.style.map(lambda v: 'color: red;' if '-' in str(v) else '', subset=['Queda Lucro']).format({"Preço": "R$ {:.2f}"})
+            # FORMATAÇÃO: Alavancagem sem casas decimais ({:.0f})
+            styler_risk = df_warning.style.map(lambda v: 'color: red;' if '-' in str(v) else '', subset=['Queda Lucro']).format({
+                "Preço": "R$ {:.2f}",
+                "Alavancagem": "{:.0f}"
+            })
             st.dataframe(styler_risk, use_container_width=True, hide_index=True)
         else: st.info("Sem alertas hoje.")
 
@@ -514,8 +510,8 @@ with tab1:
                 # EIXO Y1 (Esquerda) -> Receita (Barras Cinzas)
                 fig.add_trace(go.Bar(
                     x=df_chart['Periodo'], 
-                    y=df_chart['Receita_Plot'], 
-                    name="Receita (Milhões)", 
+                    y=df_chart['Receita'], 
+                    name="Receita", 
                     marker_color='#A9A9A9', # Cinza
                     opacity=0.8,
                     yaxis='y1',
@@ -536,13 +532,10 @@ with tab1:
                 ))
 
                 # EIXO Y3 (Direita 2 - Oculto/Sobreposto) -> Lucro (Linha Verde Arredondada)
-                # O uso de yaxis3 permite que a linha do lucro tenha sua própria escala (autorange)
-                # garantindo que ela suba e desça visualmente proporcional ao seu próprio histórico,
-                # permitindo comparar a tendência com a linha de preço.
                 fig.add_trace(go.Scatter(
                     x=df_chart['Periodo'], 
-                    y=df_chart['Lucro_Plot'], 
-                    name="Lucro Líq. (Milhões)", 
+                    y=df_chart['Lucro'], 
+                    name="Lucro Líq.", 
                     line=dict(color='#008000', width=3, dash='dot', shape='spline', smoothing=1.3), 
                     mode='lines+markers',
                     yaxis='y3',
@@ -552,20 +545,20 @@ with tab1:
                 
                 fig.update_layout(
                     title=f"{selected}: Receita vs Lucro vs Preço (Curto Prazo)",
-                    # TYPE CATEGORY: Impede o problema de 2022.5
                     xaxis=dict(title="Período", type='category'),
                     
                     # Y1: Receita (Esquerda)
                     yaxis=dict(
-                        title="Receita (M)", 
+                        title="Receita", 
                         side="left", 
                         showgrid=False,
-                        color="#808080"
+                        color="#808080",
+                        showticklabels=False 
                     ),
                     
                     # Y2: Preço (Direita - Principal)
                     yaxis2=dict(
-                        title="Preço da Ação (R$)", 
+                        title="Preço (R$)", 
                         side="right", 
                         overlaying="y", 
                         showgrid=True,
@@ -574,7 +567,7 @@ with tab1:
                     
                     # Y3: Lucro (Direita - Secundário Invisível)
                     yaxis3=dict(
-                        title="Lucro Líquido",
+                        title="Lucro",
                         anchor="x",
                         overlaying="y",
                         side="right",
