@@ -107,7 +107,6 @@ with st.sidebar:
     else:
         st.write("**Resultados:**")
         
-        # Calculo das porcentagens
         if total_votes > 0:
             p_tec = (votes['tecnica'] / total_votes)
             p_fun = (votes['fundamentalista'] / total_votes)
@@ -189,6 +188,27 @@ def show_lock_screen(key_id):
     
     st.write("")
     st.button("🔓 Já visitei o anúncio / LIBERAR SITE", type="primary", on_click=liberar_acesso, key=f"btn_unlock_{key_id}")
+
+# --- FUNÇÃO BANNERS (RODAPÉ) ---
+def show_affiliate_banners():
+    st.divider()
+    col_ad1, col_ad2 = st.columns(2)
+    with col_ad1:
+        st.markdown("""
+        <div style="background-color: #fffbe6; border: 1px solid #ffe58f; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
+            <h4 style="margin-top:0; color: #333;">✈️ Nomad: Taxa Zero em Dólar</h4>
+            <p style="font-size: 14px;">Ganhe taxa zero na 1ª conversão.</p>
+            <div style="text-align:center;"><a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I%26n=Jader" target="_blank" style="text-decoration: none; color: white; background-color: #1a1a1a; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">➡️ <b>Abrir Conta Nomad</b></a></div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_ad2:
+        st.markdown("""
+        <div style="background-color: #eaf6ff; border: 1px solid #bae0ff; padding: 15px; border-radius: 10px; color: #333; height: 100%;">
+            <h4 style="margin-top:0; color: #009ee3;">🤝 Mercado Pago: R$ 30 OFF</h4>
+            <p style="font-size: 14px;">Ganhe <b>R$ 30 de desconto</b>.</p>
+            <div style="text-align:center;"><a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration: none; color: white; background-color: #009ee3; padding: 10px 15px; border-radius: 5px; font-size: 14px; display: inline-block; width: 100%;">➡️ <b>Resgatar R$ 30</b></a></div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # --- DADOS PRINCIPAIS ---
 @st.cache_data(ttl=3600*6)
