@@ -14,6 +14,12 @@ if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 
+# --- ID DO VISITANTE (CORREÇÃO DO CONTADOR) ---
+# Gera um ID único apenas se não existir na sessão atual. 
+# Isso impede que o ID mude quando o usuário clica em botões.
+if 'visitor_id' not in st.session_state:
+    st.session_state.visitor_id = str(uuid.uuid4())
+
 def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
 def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
 def close_expander(): st.session_state.expander_open = False
@@ -47,28 +53,39 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CONTADOR ---
-def update_visitor_counter():
+# --- CONTADOR CORRIGIDO ---
+def update_visitor_counter(current_user_id):
     file_path = "visitor_counter.json"
     today = datetime.datetime.now().strftime("%Y-%m-%d")
-    try: visitor_id = str(uuid.uuid4())
-    except: visitor_id = "unknown"
+    
     data = {"total_visits": 0, "daily_visits": {}}
+    
+    # Tenta carregar dados existentes
     if os.path.exists(file_path):
         try:
             with open(file_path, "r") as f: data = json.load(f)
         except: pass 
-    if today not in data["daily_visits"]: data["daily_visits"][today] = []
-    if len(data["daily_visits"][today]) < 10000:
-        data["daily_visits"][today].append(visitor_id)
-        data["total_visits"] += 1
-        try:
-            with open(file_path, "w") as f: json.dump(data, f)
-        except: pass     
+    
+    # Inicializa a lista do dia se não existir
+    if today not in data["daily_visits"]: 
+        data["daily_visits"][today] = []
+    
+    # LÓGICA DE UNICIDADE: Só incrementa se o ID da sessão NÃO estiver na lista de hoje
+    if current_user_id not in data["daily_visits"][today]:
+        if len(data["daily_visits"][today]) < 20000: # Limite de segurança
+            data["daily_visits"][today].append(current_user_id)
+            data["total_visits"] += 1
+            try:
+                with open(file_path, "w") as f: json.dump(data, f)
+            except: pass
+            
     return data["total_visits"]
 
-try: total_visitantes = update_visitor_counter()
-except: total_visitantes = 0 
+try: 
+    # Passa o ID persistente da sessão
+    total_visitantes = update_visitor_counter(st.session_state.visitor_id)
+except: 
+    total_visitantes = 0 
 
 # --- SIDEBAR ---
 with st.sidebar:
