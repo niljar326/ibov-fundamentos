@@ -30,7 +30,6 @@ if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
-if 'has_voted' not in st.session_state: st.session_state.has_voted = False
 
 def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
 def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
@@ -49,33 +48,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SISTEMA DE VOTAÇÃO ---
-VOTE_FILE = "voting_stats.json"
-
-def get_votes():
-    if not os.path.exists(VOTE_FILE):
-        return {"tecnica": 0, "fundamentalista": 0, "ambas": 0}
-    try:
-        with open(VOTE_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {"tecnica": 0, "fundamentalista": 0, "ambas": 0}
-
-def save_vote(option):
-    votes = get_votes()
-    if option in votes:
-        votes[option] += 1
-    else:
-        votes[option] = 1
-    
-    try:
-        with open(VOTE_FILE, "w") as f:
-            json.dump(votes, f)
-        st.session_state.has_voted = True
-        st.rerun()
-    except:
-        pass
-
 # --- SIDEBAR ---
 with st.sidebar:
     whatsapp_number = "552220410353"
@@ -90,41 +62,6 @@ with st.sidebar:
         </a>
     """, unsafe_allow_html=True)
     
-    st.divider()
-    st.header("📊 Enquete")
-    
-    votes = get_votes()
-    total_votes = sum(votes.values())
-    
-    if not st.session_state.has_voted:
-        st.write("**Você prefere:**")
-        if st.button("📈 Análise Técnica"):
-            save_vote("tecnica")
-        if st.button("🏢 Análise Fundamentalista"):
-            save_vote("fundamentalista")
-        if st.button("🚀 Ambas"):
-            save_vote("ambas")
-    else:
-        st.write("**Resultados:**")
-        
-        if total_votes > 0:
-            p_tec = (votes['tecnica'] / total_votes)
-            p_fun = (votes['fundamentalista'] / total_votes)
-            p_amb = (votes['ambas'] / total_votes)
-        else:
-            p_tec = p_fun = p_amb = 0
-
-        st.caption(f"Análise Técnica ({int(p_tec*100)}%)")
-        st.progress(p_tec)
-        
-        st.caption(f"Fundamentalista ({int(p_fun*100)}%)")
-        st.progress(p_fun)
-        
-        st.caption(f"Ambas ({int(p_amb*100)}%)")
-        st.progress(p_amb)
-        
-        st.success("Obrigado por votar!")
-
     st.divider()
     st.caption("Desenvolvido com Streamlit")
 
