@@ -566,10 +566,11 @@ with tab1:
         st.divider()
         st.subheader("📈 Gráfico Cotação vs Lucro/Receita (4 Anos + TTM)")
         
-        # --- MUDANÇA: Lista ampliada para as 200 mais líquidas ---
-        opts = df_liquid_200['Ativo'].tolist()
-        # Garante que LREN3 está na lista se existir no DF original, caso a liquidez varie
-        if 'LREN3' not in opts and not df_raw[df_raw['Ativo'] == 'LREN3'].empty:
+        # --- CORREÇÃO: Usar coluna 'papel' pois 'Ativo' não existe em df_liquid_200 ---
+        opts = df_liquid_200['papel'].tolist()
+        
+        # Garante que LREN3 está na lista se existir no DF original
+        if 'LREN3' not in opts and not df_raw[df_raw['papel'] == 'LREN3'].empty:
             opts.append('LREN3')
             
         idx = opts.index('LREN3') if 'LREN3' in opts else 0
