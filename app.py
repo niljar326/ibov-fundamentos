@@ -236,6 +236,64 @@ def get_magic_formula_data(df_base):
     
     return df_final.reset_index(drop=True)
 
+# --- GRAHAM VALUATION ---
+@st.cache_data(ttl=3600*6)
+def get_graham_data(df_base):
+    if df_base.empty: return pd.DataFrame()
+    
+    df = df_base.copy()
+    
+    # 1. Filtro Universo 400 + Liquidez > 100k
+    df = df[df['liq2m'] > 100000]
+    
+    # Filtrar apenas empresas com Lucro (P/L > 0) para cálculo funcionar
+    df = df[df['pl'] > 0]
+    
+    # Top 400
+    df = df.sort_values(by='liq2m', ascending=False).head(400)
+    
+    # 2. Calcular LPA (Preço / PL)
+    # Evitar divisão por zero se houver PL zero, embora o filtro acima remova
+    df['lpa'] = df['cotacao'] / df['pl']
+    
+    # 3. Parâmetros da Fórmula
+    # V = (LPA * (8.5 + 2*g) * 4.4) / Y
+    # Y = Taxa AAA (IPCA + spread). User pediu: "Se for IPCA + 6%, use 6".
+    # Vamos usar 6.0 como padrão conservador atual
+    Y_rate = 6.0 
+    growth_factor = 8.5 + (2 * 10) # 8.5 + 20 = 28.5
+    const_graham = 4.4
+    
+    df['valor_intrinseco'] = (df['lpa'] * growth_factor * const_graham) / Y_rate
+    
+    # 4. Divisão do valor da ação por V (Ratio)
+    df['ratio_graham'] = df['cotacao'] / df['valor_intrinseco']
+    
+    # 5. Classificação (Status)
+    def classify(r):
+        if r < 1.0: return "Barata"
+        elif r > 1.0: return "Cara"
+        else: return "Justo"
+        
+    df['Status'] = df['ratio_graham'].apply(classify)
+    
+    # 6. Ordenação (Do menor resultado da divisão para o maior)
+    df = df.sort_values(by='ratio_graham', ascending=True)
+    
+    # Seleção e Rename
+    cols_out = ['papel', 'cotacao', 'valor_intrinseco', 'ratio_graham', 'Status', 'lpa']
+    df_final = df[cols_out].copy()
+    
+    df_final.rename(columns={
+        'papel': 'Ativo',
+        'cotacao': 'Preço Atual',
+        'valor_intrinseco': 'Preço Justo (Graham)',
+        'ratio_graham': 'Ratio (P/V)',
+        'lpa': 'LPA'
+    }, inplace=True)
+    
+    return df_final.reset_index(drop=True)
+
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
     if df_original.empty: return pd.DataFrame()
@@ -405,47 +463,6 @@ def get_market_news():
         except: continue
     return news_items[:6]
 
-@st.cache_data(ttl=3600*4)
-def scan_roc_weekly(df_top_liq):
-    if df_top_liq.empty: return pd.DataFrame()
-    try:
-        # AUMENTO DO RANGE DE 90 PARA 200
-        top_tickers = df_top_liq.sort_values(by='liq2m', ascending=False).head(200)['papel'].tolist()
-        tickers_sa = [t + ".SA" for t in top_tickers]
-        candidates = []
-    except: return pd.DataFrame()
-    try:
-        data = yf.download(tickers_sa, period="7y", interval="1wk", group_by='ticker', progress=False, threads=True)
-        for t in tickers_sa:
-            clean = t.replace(".SA", "")
-            try:
-                if isinstance(data.columns, pd.MultiIndex):
-                    if t in data.columns.get_level_values(0): df_t = data[t].copy()
-                    else: continue
-                else: df_t = data.copy()
-
-                if df_t.empty or len(df_t) < 310: continue
-                df_t['EMA17'] = df_t['Close'].ewm(span=17).mean()
-                df_t['EMA34'] = df_t['Close'].ewm(span=34).mean()
-                df_t['EMA72'] = df_t['Close'].ewm(span=72).mean()
-                df_t['EMA305'] = df_t['Close'].ewm(span=305).mean()
-                
-                curr = df_t.iloc[-1]
-                roc17 = ((curr['Close'] - curr['EMA17']) / curr['EMA17']) * 100
-                roc34 = ((curr['Close'] - curr['EMA34']) / curr['EMA34']) * 100
-                roc72 = ((curr['Close'] - curr['EMA72']) / curr['EMA72']) * 100
-                roc305 = ((curr['Close'] - curr['EMA305']) / curr['EMA305']) * 100
-
-                cond_alta = (roc17 < 0) & (roc34 > 0) & (roc72 > 0) & (roc305 > 0)
-                cond_media = (roc17 < 0) & (roc34 < 0) & (roc34 > roc17) & (roc72 > 0) & (roc305 > 0)
-                prob = "Alta (Caiu Comprou)" if cond_alta else ("Média" if cond_media else "")
-                
-                if prob:
-                    candidates.append({'Ativo': clean, 'Preço': curr['Close'], 'Probabilidade': prob, 'ROC17 %': roc17, 'TV_Symbol': f"BMFBOVESPA:{clean}"})
-            except: continue
-        return pd.DataFrame(candidates)
-    except: return pd.DataFrame()
-
 def show_chart_widget(symbol_tv, interval="D"):
     html_code = f"""
     <div class="tradingview-widget-container">
@@ -483,11 +500,10 @@ with st.spinner('Analisando mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    # df_scan_bb removido pois a aba foi substituída
     df_magic = get_magic_formula_data(df_raw)
-    df_scan_roc = scan_roc_weekly(df_raw)
+    df_graham = get_graham_data(df_raw)
 
-tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "🚀 Setup ROC (Caiu Comprou)"])
+tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham"])
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
@@ -586,16 +602,13 @@ with tab2:
         if not df_magic.empty:
             st.success(f"Top 40 Empresas selecionadas de um universo de 400 papéis.")
             
-            # Função de formatação condicional substituta ao background_gradient (que exige matplotlib)
+            # Função de formatação condicional substituta
             def color_magic_score(val):
-                # Quanto menor o score, melhor (Verde)
-                # Valores aproximados para o ranking de soma
-                if val < 50: color = "#d4edda" # Verde claro
-                elif val < 150: color = "#fff3cd" # Amarelo claro
-                else: color = "#f8d7da" # Vermelho claro
+                if val < 50: color = "#d4edda" 
+                elif val < 150: color = "#fff3cd" 
+                else: color = "#f8d7da" 
                 return f'background-color: {color}; color: black;'
 
-            # Formatação visual
             styler_magic = df_magic.style.format({
                 "Preço": "R$ {:.2f}", 
                 "Score Mágico": "{:.0f}",
@@ -611,21 +624,36 @@ with tab2:
     show_affiliate_banners()
 
 with tab3:
-    st.subheader("🚀 Setup ROC")
+    st.subheader("💎 Valuation: Método Graham (Adaptado)")
+    st.markdown("""
+    **Fórmula de Valor Intrínseco:** $V = \\frac{LPA \\times (8.5 + 2g) \\times 4.4}{Y}$
+    
+    *   **LPA:** Lucro por Ação.
+    *   **g:** Crescimento projetado (Considerado **10%** fixo neste modelo).
+    *   **Y:** Rendimento de Títulos Corporativos AAA (IPCA + Spread). Considerado **6.0%** (Real Yield Atual).
+    *   **Classificação:** Baseada no Ratio (Preço / Valor Intrínseco). Quanto menor, mais descontada.
+    """)
+    
     if not st.session_state.app_liberado:
         show_lock_screen("tab3") 
     else:
-        col_roc_list, col_roc_chart = st.columns([1, 2])
-        with col_roc_list:
-            if not df_scan_roc.empty:
-                if st.session_state.tv_symbol == "BMFBOVESPA:LREN3": st.session_state.tv_symbol = df_scan_roc.iloc[0]['TV_Symbol']
-                def color_prob(val): return f'background-color: {"#d4edda" if "Alta" in val else "#fff3cd"}; color: black;'
-                event_roc = st.dataframe(df_scan_roc[['Ativo', 'Preço', 'Probabilidade', 'ROC17 %']].style.format({"Preço": "R$ {:.2f}", "ROC17 %": "{:.2f}%"}).map(color_prob, subset=['Probabilidade']), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="roc_table")
-                if len(event_roc.selection.rows) > 0: st.session_state.tv_symbol = df_scan_roc.iloc[event_roc.selection.rows[0]]['TV_Symbol']
-            else: st.info("Sem sinais ROC.")
-        with col_roc_chart:
-            clean = st.session_state.tv_symbol.split(":")[-1]
-            st.markdown(f"#### {clean} (Diário)")
-            show_chart_widget(st.session_state.tv_symbol, interval="D")
-    
+        if not df_graham.empty:
+            # Função de Cor baseada no Status
+            def color_graham(val):
+                color = "white"
+                if val == "Barata": color = "#d4edda" # Azul/Verde claro
+                elif val == "Cara": color = "#f8d7da" # Vermelho claro
+                return f'background-color: {color}; color: black;'
+
+            styler_graham = df_graham.style.format({
+                "Preço Atual": "R$ {:.2f}",
+                "Preço Justo (Graham)": "R$ {:.2f}",
+                "Ratio (P/V)": "{:.2f}",
+                "LPA": "R$ {:.2f}"
+            }).map(color_graham, subset=['Status'])
+            
+            st.dataframe(styler_graham, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhuma ação atende aos critérios de liquidez e lucro positivo para este método.")
+
     show_affiliate_banners()
