@@ -154,7 +154,6 @@ def get_ranking_data():
         df = fundamentus.get_resultado()
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
-        # Adicionado 'roic' na lista de colunas para tratar
         cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y', 'roic']
         for col in cols:
             if col in df.columns: df[col] = df[col].apply(clean_fundamentus_col)
@@ -184,54 +183,26 @@ def apply_best_filters(df):
 @st.cache_data(ttl=3600*6)
 def get_magic_formula_data(df_base):
     if df_base.empty: return pd.DataFrame()
-    
-    # Copia para não alterar o original
     df = df_base.copy()
-    
-    # 1. Filtros iniciais de consistência
-    # Garantir liquidez mínima > 100k
     df = df[df['liq2m'] > 100000]
-    # Remover empresas com EBIT/EV negativo (não aplicável para a fórmula padrão de "empresas baratas e boas")
     df = df[df['evebit'] > 0]
-    
-    # 2. Selecionar Top 400 por Liquidez
     df = df.sort_values(by='liq2m', ascending=False).head(400)
-    
-    # 3. Calcular Métricas
-    # EY (Earning Yield) = EBIT / Valor da Empresa.
-    # O fundamentus fornece EV/EBIT. Logo, EY = 1 / (EV/EBIT).
     df['ey_score'] = 1 / df['evebit']
-    
-    # 4. Rankear
-    # EY: Maior é melhor (descending) -> Rank 1
     df['rank_ey'] = df['ey_score'].rank(ascending=False)
-    
-    # ROIC: Maior é melhor (descending) -> Rank 1
     df['rank_roic'] = df['roic'].rank(ascending=False)
-    
-    # 5. Soma dos Ranks (Fórmula Mágica)
     df['magic_points'] = df['rank_ey'] + df['rank_roic']
-    
-    # 6. Ordenar pelo menor Rank acumulado (Melhor empresa)
     df_final = df.sort_values(by='magic_points', ascending=True).head(40)
     
-    # Formatação para exibição
     df_final['roic_fmt'] = (df_final['roic'] * 100).apply(lambda x: f"{x:.1f}%")
     df_final['ey_fmt'] = (df_final['ey_score'] * 100).apply(lambda x: f"{x:.1f}%")
     
-    # Seleção de colunas (removida a liq2m da exibição final)
     cols_out = ['papel', 'cotacao', 'magic_points', 'rank_ey', 'rank_roic', 'ey_fmt', 'roic_fmt', 'evebit']
     df_final = df_final[cols_out].copy()
     
     df_final.rename(columns={
-        'papel': 'Ativo',
-        'cotacao': 'Preço',
-        'magic_points': 'Score Mágico',
-        'rank_ey': 'Rank EY',
-        'rank_roic': 'Rank ROIC',
-        'ey_fmt': 'Earning Yield',
-        'roic_fmt': 'ROIC',
-        'evebit': 'EV/EBIT'
+        'papel': 'Ativo', 'cotacao': 'Preço', 'magic_points': 'Score Mágico',
+        'rank_ey': 'Rank EY', 'rank_roic': 'Rank ROIC', 'ey_fmt': 'Earning Yield',
+        'roic_fmt': 'ROIC', 'evebit': 'EV/EBIT'
     }, inplace=True)
     
     return df_final.reset_index(drop=True)
@@ -240,28 +211,19 @@ def get_magic_formula_data(df_base):
 @st.cache_data(ttl=3600*6)
 def get_graham_data(df_base):
     if df_base.empty: return pd.DataFrame()
-    
     df = df_base.copy()
-    
-    # 1. Filtro Universo 400 + Liquidez > 100k
     df = df[df['liq2m'] > 100000]
     df = df[df['pl'] > 0]
     df = df.sort_values(by='liq2m', ascending=False).head(400)
     
-    # 2. Calcular LPA (Preço / PL)
     df['lpa'] = df['cotacao'] / df['pl']
-    
-    # 3. Parâmetros da Fórmula
     Y_rate = 6.0 
     growth_factor = 8.5 + (2 * 10) 
     const_graham = 4.4
     
     df['valor_intrinseco'] = (df['lpa'] * growth_factor * const_graham) / Y_rate
-    
-    # 4. Divisão do valor da ação por V (Ratio)
     df['ratio_graham'] = df['cotacao'] / df['valor_intrinseco']
     
-    # 5. Classificação (Status)
     def classify(r):
         if r < 1.0: return "Barata"
         elif r > 1.0: return "Cara"
@@ -280,44 +242,51 @@ def get_graham_data(df_base):
     
     return df_final.reset_index(drop=True)
 
-# --- NOVO: ABA 4 (LUCRO VS PREÇO) ---
+# --- NOVO: ABA 4 (EPS Diluído) ---
 @st.cache_data(ttl=3600*6)
-def get_earnings_gap_data(df_base):
+def get_eps_data(df_base):
     if df_base.empty: return pd.DataFrame()
     
-    df = df_base.copy()
+    # Filtra Top 30 Liquidez > 100k para não sobrecarregar download (YFinance é lento em loop)
+    top_30 = df_base[df_base['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(30)['papel'].tolist()
     
-    # Filtro Top 200 e Liquidez > 100k
-    df = df[df['liq2m'] > 100000]
-    # Filtra PL positivo (para ter lucro real)
-    df = df[df['pl'] > 0]
+    eps_results = []
     
-    # Pega top 200 liquidez
-    df = df.sort_values(by='liq2m', ascending=False).head(200)
-    
-    # Calcular LPA
-    df['lpa'] = df['cotacao'] / df['pl']
-    
-    # Calcular Earnings Yield (Lucro / Preço) em %
-    # Quanto maior, mais lucro a empresa entrega pelo preço que custa
-    df['yield'] = (df['lpa'] / df['cotacao']) * 100
-    
-    # Ordenar do MAIOR yield (maior distância do lucro para o preço) para o menor
-    df = df.sort_values(by='yield', ascending=False)
-    
-    cols_out = ['papel', 'cotacao', 'lpa', 'pl', 'yield']
-    df_final = df[cols_out].copy()
-    
-    df_final.rename(columns={
-        'papel': 'Ativo',
-        'cotacao': 'Preço',
-        'lpa': 'LPA (Lucro/Ação)',
-        'pl': 'P/L',
-        'yield': 'Earnings Yield (%)'
-    }, inplace=True)
-    
-    return df_final.reset_index(drop=True)
-
+    for ticker in top_30:
+        try:
+            ticker_sa = ticker + ".SA"
+            stock = yf.Ticker(ticker_sa)
+            # Pega dados trimestrais
+            fin = stock.quarterly_financials
+            
+            if fin.empty: continue
+            
+            # Tenta encontrar linhas de EPS
+            # Geralmente 'Basic EPS' ou 'Diluted EPS'
+            eps_row = None
+            for idx in fin.index:
+                if 'Diluted EPS' in str(idx) or 'Basic EPS' in str(idx):
+                    eps_row = idx
+                    break
+            
+            if eps_row is not None:
+                # Pega o valor do último trimestre
+                val = fin.loc[eps_row].iloc[0]
+                date_ref = fin.columns[0]
+                
+                # Filtra apenas se EPS Trimestral > 1.0
+                if val > 1.0:
+                    eps_results.append({
+                        'Ativo': ticker,
+                        'EPS Trimestral (R$)': val,
+                        'Data Ref.': date_ref.strftime('%d/%m/%Y'),
+                        'Preço': df_base[df_base['papel'] == ticker]['cotacao'].values[0]
+                    })
+        except: continue
+        
+    if eps_results:
+        return pd.DataFrame(eps_results).sort_values(by='EPS Trimestral (R$)', ascending=False)
+    return pd.DataFrame()
 
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
@@ -359,22 +328,17 @@ def get_risk_table(df_original):
 def get_chart_data(ticker):
     try:
         stock = yf.Ticker(ticker + ".SA")
-        
-        # 1. Coleta dos Dataframes
         financials = stock.financials.T
         quarterly = stock.quarterly_financials.T
         hist = stock.history(period="5y")
         
-        # Ajuste de Fuso Horário
         if not financials.empty: financials.index = pd.to_datetime(financials.index).tz_localize(None)
         if not quarterly.empty: quarterly.index = pd.to_datetime(quarterly.index).tz_localize(None)
         if not hist.empty: hist.index = pd.to_datetime(hist.index).tz_localize(None)
 
-        # Ordenar (Do mais antigo para o mais novo)
         financials = financials.sort_index()
         quarterly = quarterly.sort_index()
 
-        # Função auxiliar para encontrar colunas
         def find_col(df, candidates):
             cols_str = [str(c) for c in df.columns]
             for cand in candidates:
@@ -394,7 +358,6 @@ def get_chart_data(ticker):
         data_rows = []
         current_year = datetime.datetime.now().year
         
-        # 2. Dados Anuais
         past_years = financials[financials.index.year < current_year]
         last_4_years = past_years.tail(4)
         
@@ -415,7 +378,6 @@ def get_chart_data(ticker):
                 'Cotação': price
             })
 
-        # 3. Dados TTM
         ttm_rev = 0.0
         ttm_inc = 0.0
         has_ttm = False
@@ -453,7 +415,6 @@ def get_chart_data(ticker):
         df_final = pd.DataFrame(data_rows)
         if df_final.empty: return None
 
-        # Formatação Texto
         df_final['Receita_Texto'] = df_final['Receita'].apply(format_short_decimal)
         df_final['Lucro_Texto'] = df_final['Lucro'].apply(format_short_decimal)
         
@@ -488,7 +449,9 @@ def get_market_news():
         except: continue
     return news_items[:6]
 
-def show_chart_widget(symbol_tv, interval="D"):
+def show_chart_widget(symbol_tv, interval="D", studies=None):
+    if studies is None: studies = ["MASimple@tv-basicstudies"]
+    studies_json = json.dumps(studies)
     html_code = f"""
     <div class="tradingview-widget-container">
       <div id="tradingview_chart"></div>
@@ -498,7 +461,7 @@ def show_chart_widget(symbol_tv, interval="D"):
         "width": "100%", "height": 500, "symbol": "{symbol_tv}", "interval": "{interval}", 
         "timezone": "America/Sao_Paulo", "theme": "light", "style": "1", "locale": "br",
         "toolbar_bg": "#f1f3f6", "enable_publishing": false, "allow_symbol_change": true,
-        "studies": ["MASimple@tv-basicstudies"], "container_id": "tradingview_chart"
+        "studies": {studies_json}, "container_id": "tradingview_chart"
       }});
       </script>
     </div>
@@ -530,9 +493,9 @@ with st.spinner('Analisando mercado...'):
     df_warning = get_risk_table(df_raw)
     df_magic = get_magic_formula_data(df_raw)
     df_graham = get_graham_data(df_raw)
-    df_earnings_gap = get_earnings_gap_data(df_raw)
+    df_eps = get_eps_data(df_raw)
 
-tab1, tab2, tab3, tab4 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "💰 Lucro vs Preço"])
+tab1, tab2, tab3, tab4 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído"])
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
@@ -566,10 +529,8 @@ with tab1:
         st.divider()
         st.subheader("📈 Gráfico Cotação vs Lucro/Receita (4 Anos + TTM)")
         
-        # --- CORREÇÃO: Usar coluna 'papel' pois 'Ativo' não existe em df_liquid_200 ---
+        # Correção da lista para o seletor (usando 'papel')
         opts = df_liquid_200['papel'].tolist()
-        
-        # Garante que LREN3 está na lista se existir no DF original
         if 'LREN3' not in opts and not df_raw[df_raw['papel'] == 'LREN3'].empty:
             opts.append('LREN3')
             
@@ -637,7 +598,6 @@ with tab2:
     else:
         if not df_magic.empty:
             st.success(f"Top 40 Empresas selecionadas de um universo de 400 papéis.")
-            
             def color_magic_score(val):
                 if val < 50: color = "#d4edda" 
                 elif val < 150: color = "#fff3cd" 
@@ -651,22 +611,15 @@ with tab2:
                 "Rank ROIC": "{:.0f}",
                 "EV/EBIT": "{:.2f}"
             }).map(color_magic_score, subset=['Score Mágico'])
-            
             st.dataframe(styler_magic, use_container_width=True, hide_index=True)
-        else:
-            st.warning("Não foi possível calcular o ranking hoje.")
-
+        else: st.warning("Não foi possível calcular o ranking hoje.")
     show_affiliate_banners()
 
 with tab3:
     st.subheader("💎 Valuation: Método Graham (Adaptado)")
     st.markdown("""
-    **Fórmula de Valor Intrínseco:** $V = \\frac{LPA \\times (8.5 + 2g) \\times 4.4}{Y}$
-    
-    *   **LPA:** Lucro por Ação.
-    *   **g:** Crescimento projetado (Considerado **10%** fixo neste modelo).
-    *   **Y:** Rendimento de Títulos Corporativos AAA (IPCA + Spread). Considerado **6.0%** (Real Yield Atual).
-    *   **Classificação:** Baseada no Ratio (Preço / Valor Intrínseco). Quanto menor, mais descontada.
+    **Fórmula:** $V = \\frac{LPA \\times (8.5 + 2g) \\times 4.4}{Y}$
+    (Considerado Crescimento 10% e Yield Real 6%).
     """)
     
     if not st.session_state.app_liberado:
@@ -685,45 +638,40 @@ with tab3:
                 "Ratio (P/V)": "{:.2f}",
                 "LPA": "R$ {:.2f}"
             }).map(color_graham, subset=['Status'])
-            
             st.dataframe(styler_graham, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhuma ação atende aos critérios.")
-
+        else: st.info("Nenhuma ação atende aos critérios.")
     show_affiliate_banners()
 
 with tab4:
-    st.subheader("💰 Lucro Real vs Preço (Earnings Yield)")
-    st.markdown("""
-    Esta lista mostra as empresas (das 200 mais líquidas) onde o **Lucro por Ação (LPA)** é mais alto em relação ao **Preço da Ação**.
+    st.subheader("📈 EPS Diluído (LPA) Trimestral")
     
-    *   **Conceito:** Uma "grande distância" do lucro para o preço indica que a empresa gera muito caixa para cada real investido na ação (Earnings Yield alto).
-    *   **Interpretação:** Quanto maior o *Earnings Yield*, teoricamente "mais barata" a empresa está em relação ao seu lucro atual.
-    """)
+    with st.expander("ℹ️ O que é EPS Diluído?", expanded=False):
+        st.markdown("""
+        **EPS (Earnings Per Share) ou LPA (Lucro por Ação) Diluído:**
+        É uma métrica que indica quanto lucro a empresa gerou por cada ação em circulação, assumindo que todos os títulos conversíveis (como opções de ações, debêntures conversíveis, etc.) fossem convertidos em ações.
+        
+        *   **Valor > R$ 1,00:** Indica empresas que geraram mais de 1 real de lucro por ação apenas no último trimestre reportado.
+        *   *Nota: A busca foi limitada às 30 ações mais líquidas para performance.*
+        """)
 
     if not st.session_state.app_liberado:
         show_lock_screen("tab4")
     else:
-        if not df_earnings_gap.empty:
-            
-            # Formatação Visual
-            def color_yield(val):
-                # Se Yield > 15% (excelente retorno sobre preço)
-                if val > 15: color = "#d4edda" 
-                # Se Yield > 10%
-                elif val > 10: color = "#e2e3e5"
-                else: color = "white"
-                return f'background-color: {color}; color: black;'
-
-            styler_gap = df_earnings_gap.style.format({
-                "Preço": "R$ {:.2f}",
-                "LPA (Lucro/Ação)": "R$ {:.2f}",
-                "P/L": "{:.2f}",
-                "Earnings Yield (%)": "{:.2f}%"
-            }).map(color_yield, subset=['Earnings Yield (%)'])
-            
-            st.dataframe(styler_gap, use_container_width=True, hide_index=True)
-        else:
-            st.info("Não há dados suficientes para este cálculo.")
+        col_eps_left, col_eps_right = st.columns([1, 2])
+        
+        with col_eps_left:
+            if not df_eps.empty:
+                st.success("Empresas com EPS > R$ 1,00 (Último Tri)")
+                st.dataframe(df_eps.style.format({
+                    "EPS Trimestral (R$)": "R$ {:.2f}",
+                    "Preço": "R$ {:.2f}"
+                }), use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma das top 30 ações líquidas apresentou EPS trimestral > R$ 1,00 recentemente.")
+        
+        with col_eps_right:
+            st.markdown("#### Gráfico com Indicador Earnings (PETR4)")
+            # Adiciona o estudo "Earnings" que mostra os balanços no gráfico
+            show_chart_widget("BMFBOVESPA:PETR4", interval="D", studies=["Earnings@tv-basicstudies"])
 
     show_affiliate_banners()
