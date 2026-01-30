@@ -587,6 +587,15 @@ with tab2:
         if not df_magic.empty:
             st.success(f"Top 40 Empresas selecionadas de um universo de 400 papéis.")
             
+            # Função de formatação condicional substituta ao background_gradient (que exige matplotlib)
+            def color_magic_score(val):
+                # Quanto menor o score, melhor (Verde)
+                # Valores aproximados para o ranking de soma
+                if val < 50: color = "#d4edda" # Verde claro
+                elif val < 150: color = "#fff3cd" # Amarelo claro
+                else: color = "#f8d7da" # Vermelho claro
+                return f'background-color: {color}; color: black;'
+
             # Formatação visual
             styler_magic = df_magic.style.format({
                 "Preço": "R$ {:.2f}", 
@@ -594,7 +603,7 @@ with tab2:
                 "Rank EY": "{:.0f}", 
                 "Rank ROIC": "{:.0f}",
                 "EV/EBIT": "{:.2f}"
-            }).background_gradient(subset=['Score Mágico'], cmap='RdYlGn_r')
+            }).map(color_magic_score, subset=['Score Mágico'])
             
             st.dataframe(styler_magic, use_container_width=True, hide_index=True)
         else:
