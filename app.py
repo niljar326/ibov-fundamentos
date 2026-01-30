@@ -189,8 +189,8 @@ def get_magic_formula_data(df_base):
     df = df_base.copy()
     
     # 1. Filtros iniciais de consistência
-    # Garantir liquidez mínima apenas para evitar lixo, mas o filtro principal será o top 400
-    df = df[df['liq2m'] > 0]
+    # Garantir liquidez mínima > 100k
+    df = df[df['liq2m'] > 100000]
     # Remover empresas com EBIT/EV negativo (não aplicável para a fórmula padrão de "empresas baratas e boas")
     df = df[df['evebit'] > 0]
     
@@ -219,8 +219,8 @@ def get_magic_formula_data(df_base):
     df_final['roic_fmt'] = (df_final['roic'] * 100).apply(lambda x: f"{x:.1f}%")
     df_final['ey_fmt'] = (df_final['ey_score'] * 100).apply(lambda x: f"{x:.1f}%")
     
-    # Seleção de colunas
-    cols_out = ['papel', 'cotacao', 'magic_points', 'rank_ey', 'rank_roic', 'ey_fmt', 'roic_fmt', 'evebit', 'liq2m']
+    # Seleção de colunas (removida a liq2m da exibição final)
+    cols_out = ['papel', 'cotacao', 'magic_points', 'rank_ey', 'rank_roic', 'ey_fmt', 'roic_fmt', 'evebit']
     df_final = df_final[cols_out].copy()
     
     df_final.rename(columns={
@@ -231,8 +231,7 @@ def get_magic_formula_data(df_base):
         'rank_roic': 'Rank ROIC',
         'ey_fmt': 'Earning Yield',
         'roic_fmt': 'ROIC',
-        'evebit': 'EV/EBIT',
-        'liq2m': 'Liquidez'
+        'evebit': 'EV/EBIT'
     }, inplace=True)
     
     return df_final.reset_index(drop=True)
@@ -575,7 +574,7 @@ with tab2:
     st.subheader("✨ Fórmula Mágica (Top 40)")
     st.markdown("""
     **Metodologia:**
-    1. Universo das 400 ações mais líquidas do Ibovespa/B3.
+    1. Universo das 400 ações mais líquidas do Ibovespa/B3 (Liquidez > 100k).
     2. Rank 1: **Earning Yield** (EBIT / Valor da Empresa) -> Do Maior para o Menor.
     3. Rank 2: **ROIC** -> Do Maior para o Menor.
     4. **Score Final** = Rank EY + Rank ROIC. (Menor pontuação indica melhor combinação de qualidade e preço).
