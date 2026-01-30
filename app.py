@@ -154,7 +154,8 @@ def get_ranking_data():
         df = fundamentus.get_resultado()
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
-        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y']
+        # Adicionado 'roic' na lista de colunas para tratar
+        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y', 'roic']
         for col in cols:
             if col in df.columns: df[col] = df[col].apply(clean_fundamentus_col)
             else: df[col] = 0.0
@@ -178,6 +179,63 @@ def apply_best_filters(df):
         'evebit': 'EV/EBIT', 'dy': 'DY', 'roe': 'ROE', 'mrgliq': 'Margem Líq.'
     }, inplace=True)
     return df_f.sort_values(by=['P/L', 'Margem Líq.'], ascending=[True, False]).reset_index(drop=True)
+
+# --- FÓRMULA MÁGICA ---
+@st.cache_data(ttl=3600*6)
+def get_magic_formula_data(df_base):
+    if df_base.empty: return pd.DataFrame()
+    
+    # Copia para não alterar o original
+    df = df_base.copy()
+    
+    # 1. Filtros iniciais de consistência
+    # Garantir liquidez mínima apenas para evitar lixo, mas o filtro principal será o top 400
+    df = df[df['liq2m'] > 0]
+    # Remover empresas com EBIT/EV negativo (não aplicável para a fórmula padrão de "empresas baratas e boas")
+    df = df[df['evebit'] > 0]
+    
+    # 2. Selecionar Top 400 por Liquidez
+    df = df.sort_values(by='liq2m', ascending=False).head(400)
+    
+    # 3. Calcular Métricas
+    # EY (Earning Yield) = EBIT / Valor da Empresa.
+    # O fundamentus fornece EV/EBIT. Logo, EY = 1 / (EV/EBIT).
+    df['ey_score'] = 1 / df['evebit']
+    
+    # 4. Rankear
+    # EY: Maior é melhor (descending) -> Rank 1
+    df['rank_ey'] = df['ey_score'].rank(ascending=False)
+    
+    # ROIC: Maior é melhor (descending) -> Rank 1
+    df['rank_roic'] = df['roic'].rank(ascending=False)
+    
+    # 5. Soma dos Ranks (Fórmula Mágica)
+    df['magic_points'] = df['rank_ey'] + df['rank_roic']
+    
+    # 6. Ordenar pelo menor Rank acumulado (Melhor empresa)
+    df_final = df.sort_values(by='magic_points', ascending=True).head(40)
+    
+    # Formatação para exibição
+    df_final['roic_fmt'] = (df_final['roic'] * 100).apply(lambda x: f"{x:.1f}%")
+    df_final['ey_fmt'] = (df_final['ey_score'] * 100).apply(lambda x: f"{x:.1f}%")
+    
+    # Seleção de colunas
+    cols_out = ['papel', 'cotacao', 'magic_points', 'rank_ey', 'rank_roic', 'ey_fmt', 'roic_fmt', 'evebit', 'liq2m']
+    df_final = df_final[cols_out].copy()
+    
+    df_final.rename(columns={
+        'papel': 'Ativo',
+        'cotacao': 'Preço',
+        'magic_points': 'Score Mágico',
+        'rank_ey': 'Rank EY',
+        'rank_roic': 'Rank ROIC',
+        'ey_fmt': 'Earning Yield',
+        'roic_fmt': 'ROIC',
+        'evebit': 'EV/EBIT',
+        'liq2m': 'Liquidez'
+    }, inplace=True)
+    
+    return df_final.reset_index(drop=True)
 
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
@@ -348,43 +406,6 @@ def get_market_news():
         except: continue
     return news_items[:6]
 
-@st.cache_data(ttl=600)
-def scan_bollinger_weekly_central(df_base):
-    if df_base.empty: return pd.DataFrame()
-    try:
-        top_300 = df_base.sort_values(by='liq2m', ascending=False).head(300)['papel'].tolist()
-        tickers_br = [t + ".SA" for t in top_300]
-    except: return pd.DataFrame()
-    candidates = []
-    try:
-        data = yf.download(tickers_br, period="2y", interval="1wk", group_by='ticker', progress=False, threads=True)
-        for t in tickers_br:
-            try:
-                if isinstance(data.columns, pd.MultiIndex):
-                    if t in data.columns.get_level_values(0): df_t = data[t].copy()
-                    else: continue
-                else: df_t = data.copy()
-                
-                if df_t.empty: continue
-                df_t.dropna(subset=['Close'], inplace=True)
-                if len(df_t) < 22: continue 
-
-                df_t['SMA20'] = df_t['Close'].rolling(window=20).mean()
-                curr, prev = df_t.iloc[-1], df_t.iloc[-2]
-                
-                def check(row): return (row['Low'] <= row['SMA20']) and (row['Close'] > row['SMA20'])
-                found, per = False, ""
-                if check(curr): found, per = True, "Semana Atual"
-                elif check(prev): found, per = True, "Semana Anterior"
-
-                if found:
-                    clean = t.replace(".SA", "")
-                    dist = ((curr['Close'] - curr['SMA20']) / curr['SMA20']) * 100
-                    candidates.append({'Ativo': clean, 'Setup': per, 'Preço Atual': curr['Close'], 'Dist. Média %': dist, 'TV_Symbol': f"BMFBOVESPA:{clean}"})
-            except: continue
-        return pd.DataFrame(candidates)
-    except: return pd.DataFrame()
-
 @st.cache_data(ttl=3600*4)
 def scan_roc_weekly(df_top_liq):
     if df_top_liq.empty: return pd.DataFrame()
@@ -463,10 +484,11 @@ with st.spinner('Analisando mercado...'):
     df_raw = get_ranking_data()
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
-    df_scan_bb = scan_bollinger_weekly_central(df_raw) 
+    # df_scan_bb removido pois a aba foi substituída
+    df_magic = get_magic_formula_data(df_raw)
     df_scan_roc = scan_roc_weekly(df_raw)
 
-tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "📉 Setup Média 20 (Pullback)", "🚀 Setup ROC (Caiu Comprou)"])
+tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "🚀 Setup ROC (Caiu Comprou)"])
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
@@ -550,23 +572,34 @@ with tab1:
     show_affiliate_banners()
 
 with tab2:
-    st.subheader("📉 Setup: Pullback na Média de 20 (Semanal)")
-    st.markdown("**Critérios:** Top 300 Liquidez | Mínima tocou Média 20 | Fechou Acima da Média.")
+    st.subheader("✨ Fórmula Mágica (Top 40)")
+    st.markdown("""
+    **Metodologia:**
+    1. Universo das 400 ações mais líquidas do Ibovespa/B3.
+    2. Rank 1: **Earning Yield** (EBIT / Valor da Empresa) -> Do Maior para o Menor.
+    3. Rank 2: **ROIC** -> Do Maior para o Menor.
+    4. **Score Final** = Rank EY + Rank ROIC. (Menor pontuação indica melhor combinação de qualidade e preço).
+    """)
+    
     if not st.session_state.app_liberado:
         show_lock_screen("tab2") 
     else:
-        col_list, col_chart = st.columns([1, 2])
-        with col_list:
-            if not df_scan_bb.empty:
-                st.write(f"**{len(df_scan_bb)} Ativos:**")
-                event = st.dataframe(df_scan_bb[['Ativo', 'Setup', 'Preço Atual', 'Dist. Média %']].style.format({"Preço Atual": "{:.2f}", "Dist. Média %": "{:.2f}%"}), use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
-                if len(event.selection.rows) > 0: st.session_state.tv_symbol = df_scan_bb.iloc[event.selection.rows[0]]['TV_Symbol']
-            else: st.info("Sem sinais.")
-        with col_chart:
-            clean = st.session_state.tv_symbol.split(":")[-1]
-            st.markdown(f"#### {clean} (Semanal)")
-            show_chart_widget(st.session_state.tv_symbol, interval="W")
-    
+        if not df_magic.empty:
+            st.success(f"Top 40 Empresas selecionadas de um universo de 400 papéis.")
+            
+            # Formatação visual
+            styler_magic = df_magic.style.format({
+                "Preço": "R$ {:.2f}", 
+                "Score Mágico": "{:.0f}",
+                "Rank EY": "{:.0f}", 
+                "Rank ROIC": "{:.0f}",
+                "EV/EBIT": "{:.2f}"
+            }).background_gradient(subset=['Score Mágico'], cmap='RdYlGn_r')
+            
+            st.dataframe(styler_magic, use_container_width=True, hide_index=True)
+        else:
+            st.warning("Não foi possível calcular o ranking hoje.")
+
     show_affiliate_banners()
 
 with tab3:
