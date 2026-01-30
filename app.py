@@ -245,23 +245,15 @@ def get_graham_data(df_base):
     
     # 1. Filtro Universo 400 + Liquidez > 100k
     df = df[df['liq2m'] > 100000]
-    
-    # Filtrar apenas empresas com Lucro (P/L > 0) para cálculo funcionar
     df = df[df['pl'] > 0]
-    
-    # Top 400
     df = df.sort_values(by='liq2m', ascending=False).head(400)
     
     # 2. Calcular LPA (Preço / PL)
-    # Evitar divisão por zero se houver PL zero, embora o filtro acima remova
     df['lpa'] = df['cotacao'] / df['pl']
     
     # 3. Parâmetros da Fórmula
-    # V = (LPA * (8.5 + 2*g) * 4.4) / Y
-    # Y = Taxa AAA (IPCA + spread). User pediu: "Se for IPCA + 6%, use 6".
-    # Vamos usar 6.0 como padrão conservador atual
     Y_rate = 6.0 
-    growth_factor = 8.5 + (2 * 10) # 8.5 + 20 = 28.5
+    growth_factor = 8.5 + (2 * 10) 
     const_graham = 4.4
     
     df['valor_intrinseco'] = (df['lpa'] * growth_factor * const_graham) / Y_rate
@@ -276,23 +268,56 @@ def get_graham_data(df_base):
         else: return "Justo"
         
     df['Status'] = df['ratio_graham'].apply(classify)
-    
-    # 6. Ordenação (Do menor resultado da divisão para o maior)
     df = df.sort_values(by='ratio_graham', ascending=True)
     
-    # Seleção e Rename
     cols_out = ['papel', 'cotacao', 'valor_intrinseco', 'ratio_graham', 'Status', 'lpa']
     df_final = df[cols_out].copy()
     
     df_final.rename(columns={
-        'papel': 'Ativo',
-        'cotacao': 'Preço Atual',
-        'valor_intrinseco': 'Preço Justo (Graham)',
-        'ratio_graham': 'Ratio (P/V)',
-        'lpa': 'LPA'
+        'papel': 'Ativo', 'cotacao': 'Preço Atual',
+        'valor_intrinseco': 'Preço Justo (Graham)', 'ratio_graham': 'Ratio (P/V)', 'lpa': 'LPA'
     }, inplace=True)
     
     return df_final.reset_index(drop=True)
+
+# --- NOVO: ABA 4 (LUCRO VS PREÇO) ---
+@st.cache_data(ttl=3600*6)
+def get_earnings_gap_data(df_base):
+    if df_base.empty: return pd.DataFrame()
+    
+    df = df_base.copy()
+    
+    # Filtro Top 200 e Liquidez > 100k
+    df = df[df['liq2m'] > 100000]
+    # Filtra PL positivo (para ter lucro real)
+    df = df[df['pl'] > 0]
+    
+    # Pega top 200 liquidez
+    df = df.sort_values(by='liq2m', ascending=False).head(200)
+    
+    # Calcular LPA
+    df['lpa'] = df['cotacao'] / df['pl']
+    
+    # Calcular Earnings Yield (Lucro / Preço) em %
+    # Quanto maior, mais lucro a empresa entrega pelo preço que custa
+    df['yield'] = (df['lpa'] / df['cotacao']) * 100
+    
+    # Ordenar do MAIOR yield (maior distância do lucro para o preço) para o menor
+    df = df.sort_values(by='yield', ascending=False)
+    
+    cols_out = ['papel', 'cotacao', 'lpa', 'pl', 'yield']
+    df_final = df[cols_out].copy()
+    
+    df_final.rename(columns={
+        'papel': 'Ativo',
+        'cotacao': 'Preço',
+        'lpa': 'LPA (Lucro/Ação)',
+        'pl': 'P/L',
+        'yield': 'Earnings Yield (%)'
+    }, inplace=True)
+    
+    return df_final.reset_index(drop=True)
+
 
 @st.cache_data(ttl=3600*12)
 def get_risk_table(df_original):
@@ -498,12 +523,16 @@ st.warning("⚠️ Utilize os dados apenas para estudo.")
 
 with st.spinner('Analisando mercado...'):
     df_raw = get_ranking_data()
+    # Preparar DataFrame de Top 200 Liquidez > 100k para uso geral
+    df_liquid_200 = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(200)
+    
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
     df_magic = get_magic_formula_data(df_raw)
     df_graham = get_graham_data(df_raw)
+    df_earnings_gap = get_earnings_gap_data(df_raw)
 
-tab1, tab2, tab3 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham"])
+tab1, tab2, tab3, tab4 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "💰 Lucro vs Preço"])
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
@@ -525,7 +554,6 @@ with tab1:
 
         st.divider()
         st.subheader("⚠️ Empresas em Risco")
-        st.caption("ℹ️ Cálculo da Alavancagem: Dívida Bruta ÷ Patrimônio Líquido. (Acima de 3 indica alto endividamento).")
         
         if not df_warning.empty:
             styler_risk = df_warning.style.map(lambda v: 'color: red;' if '-' in str(v) else '', subset=['Queda Lucro']).format({
@@ -537,10 +565,17 @@ with tab1:
 
         st.divider()
         st.subheader("📈 Gráfico Cotação vs Lucro/Receita (4 Anos + TTM)")
-        opts = df_best['Ativo'].tolist()
+        
+        # --- MUDANÇA: Lista ampliada para as 200 mais líquidas ---
+        opts = df_liquid_200['Ativo'].tolist()
+        # Garante que LREN3 está na lista se existir no DF original, caso a liquidez varie
+        if 'LREN3' not in opts and not df_raw[df_raw['Ativo'] == 'LREN3'].empty:
+            opts.append('LREN3')
+            
         idx = opts.index('LREN3') if 'LREN3' in opts else 0
-        with st.expander("🔎 Selecionar Ação", expanded=st.session_state.expander_open):
+        with st.expander("🔎 Selecionar Ação (Top 200 Líquidas)", expanded=st.session_state.expander_open):
             selected = st.selectbox("Ativo:", opts, index=idx, on_change=close_expander)
+        
         if selected:
             df_chart = get_chart_data(selected)
             if df_chart is not None:
@@ -602,7 +637,6 @@ with tab2:
         if not df_magic.empty:
             st.success(f"Top 40 Empresas selecionadas de um universo de 400 papéis.")
             
-            # Função de formatação condicional substituta
             def color_magic_score(val):
                 if val < 50: color = "#d4edda" 
                 elif val < 150: color = "#fff3cd" 
@@ -638,11 +672,10 @@ with tab3:
         show_lock_screen("tab3") 
     else:
         if not df_graham.empty:
-            # Função de Cor baseada no Status
             def color_graham(val):
                 color = "white"
-                if val == "Barata": color = "#d4edda" # Azul/Verde claro
-                elif val == "Cara": color = "#f8d7da" # Vermelho claro
+                if val == "Barata": color = "#d4edda" 
+                elif val == "Cara": color = "#f8d7da" 
                 return f'background-color: {color}; color: black;'
 
             styler_graham = df_graham.style.format({
@@ -654,6 +687,42 @@ with tab3:
             
             st.dataframe(styler_graham, use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhuma ação atende aos critérios de liquidez e lucro positivo para este método.")
+            st.info("Nenhuma ação atende aos critérios.")
+
+    show_affiliate_banners()
+
+with tab4:
+    st.subheader("💰 Lucro Real vs Preço (Earnings Yield)")
+    st.markdown("""
+    Esta lista mostra as empresas (das 200 mais líquidas) onde o **Lucro por Ação (LPA)** é mais alto em relação ao **Preço da Ação**.
+    
+    *   **Conceito:** Uma "grande distância" do lucro para o preço indica que a empresa gera muito caixa para cada real investido na ação (Earnings Yield alto).
+    *   **Interpretação:** Quanto maior o *Earnings Yield*, teoricamente "mais barata" a empresa está em relação ao seu lucro atual.
+    """)
+
+    if not st.session_state.app_liberado:
+        show_lock_screen("tab4")
+    else:
+        if not df_earnings_gap.empty:
+            
+            # Formatação Visual
+            def color_yield(val):
+                # Se Yield > 15% (excelente retorno sobre preço)
+                if val > 15: color = "#d4edda" 
+                # Se Yield > 10%
+                elif val > 10: color = "#e2e3e5"
+                else: color = "white"
+                return f'background-color: {color}; color: black;'
+
+            styler_gap = df_earnings_gap.style.format({
+                "Preço": "R$ {:.2f}",
+                "LPA (Lucro/Ação)": "R$ {:.2f}",
+                "P/L": "{:.2f}",
+                "Earnings Yield (%)": "{:.2f}%"
+            }).map(color_yield, subset=['Earnings Yield (%)'])
+            
+            st.dataframe(styler_gap, use_container_width=True, hide_index=True)
+        else:
+            st.info("Não há dados suficientes para este cálculo.")
 
     show_affiliate_banners()
