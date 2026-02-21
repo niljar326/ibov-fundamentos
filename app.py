@@ -496,7 +496,7 @@ with st.spinner('Analisando mercado...'):
     df_eps = get_eps_data(df_raw)
 
 # Atualizado para incluir Tab 5
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria (Preço vs Lucro)"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria"])
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
@@ -678,91 +678,88 @@ with tab4:
     show_affiliate_banners()
 
 with tab5:
-    st.subheader("📉 Assimetria: Lucro vs Preço")
+    st.subheader("📉 Assimetria: Lucro acima do Preço")
     st.markdown("""
-    **Conceito:** Esta aba filtra empresas onde o **Lucro Líquido** (ajustado por um P/L base de 10x) está visualmente **acima** da linha do **Preço**.
-    
-    *   **P/L < 10:** Matematicamente, se o Lucro anualizado vezes 10 é maior que o preço, a ação está com um P/L abaixo de 10.
-    *   O gráfico abaixo plota a "Linha Verde" representando 10x o Lucro Por Ação (Estimado). Se a linha Verde está acima da Azul (Preço), a empresa está "Barata" segundo este múltiplo.
+    **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m), indicando um possível desconto relativo ao histórico da própria empresa.
+    *   O gráfico utiliza as mesmas escalas originais (com eixos independentes ajustados automaticamente pelo Plotly).
     """)
     
     if not st.session_state.app_liberado:
         show_lock_screen("tab5")
     else:
-        # 1. Filtra DF_RAW para P/L < 10 e > 0 e Liquidez OK
-        mask_assim = (df_raw['pl'] > 0) & (df_raw['pl'] < 10) & (df_raw['liq2m'] > 100000)
-        df_assim = df_raw[mask_assim].sort_values(by='pl', ascending=True).head(50)
+        # Filtra Top 40 Liquidez para processamento rápido do filtro visual
+        candidates_list = df_raw[df_raw['liq2m'] > 200000].sort_values(by='liq2m', ascending=False).head(40)['papel'].tolist()
         
-        if not df_assim.empty:
-            st.dataframe(df_assim[['papel', 'cotacao', 'pl', 'roe', 'dy']].style.format({
-                "cotacao": "R$ {:.2f}", "pl": "{:.2f}", "roe": "{:.1f}%", "dy": "{:.1f}%"
-            }), use_container_width=True, hide_index=True)
-            
-            st.divider()
-            
-            opts_assim = df_assim['papel'].tolist()
-            selected_assim = st.selectbox("🔎 Visualizar Assimetria (Preço vs Lucro x10)", opts_assim)
-            
-            if selected_assim:
-                # Reutiliza o get_chart_data, mas vamos manipular os dados para o gráfico específico
-                df_chart_a = get_chart_data(selected_assim)
-                
-                if df_chart_a is not None and len(df_chart_a) > 0:
-                    # Obter dados atuais do fundamentus para calcular o ' fator de conversão'
-                    # Sabemos que: Price / PL = EPS.
-                    # Vamos estimar o número de ações ou simplesmente normalizar a curva de lucro para a escala de preço baseada no P/L atual.
-                    
-                    try:
-                        row_fund = df_raw[df_raw['papel'] == selected_assim].iloc[0]
-                        current_pl = row_fund['pl']
-                        current_price = row_fund['cotacao']
-                        
-                        # EPS Anualizado Atual Estimado
-                        current_eps = current_price / current_pl if current_pl > 0 else 0
-                        
-                        # Total Net Income TTM from Chart Data
-                        last_total_income = df_chart_a['Lucro'].iloc[-1]
-                        
-                        # Estimated Shares (constante aproximada)
-                        est_shares = last_total_income / current_eps if current_eps > 0 else 1
-                        
-                        # Cria a série "Preço Justo (P/L 10x)"
-                        # Para cada ponto no histórico: (Lucro Total / Shares) * 10
-                        df_chart_a['Fair_Value_Line'] = (df_chart_a['Lucro'] / est_shares) * 10
-                        
-                        # Plot
-                        fig_a = go.Figure()
-                        
-                        # Linha de Preço
-                        fig_a.add_trace(go.Scatter(
-                            x=df_chart_a['Periodo'], y=df_chart_a['Cotação'], name="Preço (R$)",
-                            line=dict(color='#0000FF', width=4), mode='lines+markers',
-                            hovertemplate='Preço: R$ %{y:.2f}<extra></extra>'
-                        ))
-                        
-                        # Linha de "Valor Justo" (Lucro * 10)
-                        fig_a.add_trace(go.Scatter(
-                            x=df_chart_a['Periodo'], y=df_chart_a['Fair_Value_Line'], name="Lucro x 10 (P/L 10)",
-                            line=dict(color='#008000', width=4, dash='solid'), mode='lines+markers',
-                            hovertemplate='Valor (Lucro x10): R$ %{y:.2f}<extra></extra>'
-                        ))
-                        
-                        fig_a.update_layout(
-                            title=f"{selected_assim}: Assimetria (Linha Verde acima = Barato/P<10x)",
-                            xaxis=dict(title="Período"),
-                            yaxis=dict(title="Valor (R$)", side="right", showgrid=True),
-                            hovermode="x unified", height=500, legend=dict(orientation="h", y=1.1, x=0)
-                        )
-                        
-                        st.plotly_chart(fig_a, use_container_width=True)
-                        st.info(f"Nota: A linha verde representa quanto a ação custaria se fosse negociada a um P/L de 10x com base no lucro daquele período. Se a linha verde está acima da azul, o P/L efetivo era menor que 10 (Desconto).")
-                        
-                    except Exception as e:
-                        st.error(f"Erro ao calcular assimetria: {e}")
-                else:
-                    st.warning("Dados históricos insuficientes.")
+        valid_asymmetry_stocks = []
+
+        # Algoritmo de pré-processamento para filtrar apenas os gráficos onde Lucro > Preço visualmente
+        # Como o gráfico tem dois eixos autoscaled, "visualamente acima" significa que 
+        # a posição relativa (0 a 100%) do Lucro atual em seu eixo é maior que a do Preço atual em seu eixo.
+        
+        if 'asymmetry_cache' not in st.session_state:
+            with st.spinner("Filtrando gráficos com assimetria visual (pode levar alguns segundos)..."):
+                for tick in candidates_list:
+                    d_ch = get_chart_data(tick)
+                    if d_ch is not None and len(d_ch) > 1:
+                        try:
+                            # Normalização Min-Max para simular a escala visual do Plotly
+                            p_vals = d_ch['Cotação']
+                            l_vals = d_ch['Lucro']
+                            
+                            p_min, p_max = p_vals.min(), p_vals.max()
+                            l_min, l_max = l_vals.min(), l_vals.max()
+                            
+                            # Evita divisão por zero
+                            if p_max > p_min and l_max > l_min:
+                                current_p = p_vals.iloc[-1]
+                                current_l = l_vals.iloc[-1]
+                                
+                                # Posição % no eixo (0.0 a 1.0)
+                                p_pos = (current_p - p_min) / (p_max - p_min)
+                                l_pos = (current_l - l_min) / (l_max - l_min)
+                                
+                                # Se a posição do lucro for maior que a do preço, visualmente a linha verde está acima da azul
+                                if l_pos > p_pos:
+                                    valid_asymmetry_stocks.append(tick)
+                        except: pass
+            st.session_state.asymmetry_cache = valid_asymmetry_stocks
         else:
-            st.warning("Nenhuma empresa com P/L positivo abaixo de 10 encontrada com a liquidez selecionada.")
+            valid_asymmetry_stocks = st.session_state.asymmetry_cache
+
+        if valid_asymmetry_stocks:
+            sel_assim = st.selectbox("Selecione Ativo com Assimetria Detectada:", valid_asymmetry_stocks)
+            
+            if sel_assim:
+                # REUTILIZAÇÃO EXATA DO CÓDIGO DO GRÁFICO DA ABA 1
+                df_chart = get_chart_data(sel_assim)
+                if df_chart is not None:
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=df_chart['Periodo'], y=df_chart['Receita'], name="Receita", 
+                        marker_color='#A9A9A9', opacity=0.8, yaxis='y1',
+                        text=df_chart['Receita_Texto'], textposition='outside', hovertemplate='Receita: %{text}<extra></extra>'
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=df_chart['Periodo'], y=df_chart['Cotação'], name="Preço (R$)", 
+                        line=dict(color='#0000FF', width=3, shape='spline', smoothing=1.3), mode='lines+markers', yaxis='y2',
+                        hovertemplate='Preço: R$ %{y:.2f}<extra></extra>'
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=df_chart['Periodo'], y=df_chart['Lucro'], name="Lucro Líq.", 
+                        line=dict(color='#008000', width=3, dash='dot', shape='spline', smoothing=1.3), mode='lines+markers', yaxis='y3',
+                        hovertemplate='Lucro: %{text}<extra></extra>', text=df_chart['Lucro_Texto']
+                    ))
+                    fig.update_layout(
+                        title=f"{sel_assim}: Receita vs Lucro vs Preço (Curto Prazo)",
+                        xaxis=dict(title="Período", type='category'),
+                        yaxis=dict(title="Receita", side="left", showgrid=False, color="#808080", showticklabels=False),
+                        yaxis2=dict(title="Preço (R$)", side="right", overlaying="y", showgrid=True, color="#0000FF"),
+                        yaxis3=dict(title="Lucro", anchor="x", overlaying="y", side="right", showgrid=False, showticklabels=False, color="#008000"),
+                        hovermode="x unified", height=500, legend=dict(orientation="h", y=1.1, x=0), barmode='overlay', margin=dict(t=80) 
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.success("✅ A linha pontilhada verde (Lucro) termina visualmente acima da linha azul (Preço) neste gráfico.")
+        else:
+            st.warning("Nenhuma ação encontrada com essa configuração visual no momento.")
 
     show_affiliate_banners()
-
