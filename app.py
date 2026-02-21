@@ -1,5 +1,3 @@
---- START OF FILE text/plain ---
-
 import streamlit as st
 import streamlit.components.v1 as components 
 import pandas as pd
@@ -767,3 +765,4 @@ with tab5:
             st.warning("Nenhuma empresa com P/L positivo abaixo de 10 encontrada com a liquidez selecionada.")
 
     show_affiliate_banners()
+
