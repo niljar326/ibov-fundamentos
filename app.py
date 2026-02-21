@@ -1,3 +1,5 @@
+--- START OF FILE text/plain ---
+
 import streamlit as st
 import streamlit.components.v1 as components 
 import pandas as pd
@@ -495,7 +497,8 @@ with st.spinner('Analisando mercado...'):
     df_graham = get_graham_data(df_raw)
     df_eps = get_eps_data(df_raw)
 
-tab1, tab2, tab3, tab4 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído"])
+# Atualizado para incluir Tab 5
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria (Preço vs Lucro)"])
 
 with tab1:
     st.markdown("Oportunidades Fundamentalistas.")
@@ -673,5 +676,94 @@ with tab4:
             st.markdown("#### Gráfico com Indicador Earnings (PETR4)")
             # Adiciona o estudo "Earnings" que mostra os balanços no gráfico
             show_chart_widget("BMFBOVESPA:PETR4", interval="D", studies=["Earnings@tv-basicstudies"])
+
+    show_affiliate_banners()
+
+with tab5:
+    st.subheader("📉 Assimetria: Lucro vs Preço")
+    st.markdown("""
+    **Conceito:** Esta aba filtra empresas onde o **Lucro Líquido** (ajustado por um P/L base de 10x) está visualmente **acima** da linha do **Preço**.
+    
+    *   **P/L < 10:** Matematicamente, se o Lucro anualizado vezes 10 é maior que o preço, a ação está com um P/L abaixo de 10.
+    *   O gráfico abaixo plota a "Linha Verde" representando 10x o Lucro Por Ação (Estimado). Se a linha Verde está acima da Azul (Preço), a empresa está "Barata" segundo este múltiplo.
+    """)
+    
+    if not st.session_state.app_liberado:
+        show_lock_screen("tab5")
+    else:
+        # 1. Filtra DF_RAW para P/L < 10 e > 0 e Liquidez OK
+        mask_assim = (df_raw['pl'] > 0) & (df_raw['pl'] < 10) & (df_raw['liq2m'] > 100000)
+        df_assim = df_raw[mask_assim].sort_values(by='pl', ascending=True).head(50)
+        
+        if not df_assim.empty:
+            st.dataframe(df_assim[['papel', 'cotacao', 'pl', 'roe', 'dy']].style.format({
+                "cotacao": "R$ {:.2f}", "pl": "{:.2f}", "roe": "{:.1f}%", "dy": "{:.1f}%"
+            }), use_container_width=True, hide_index=True)
+            
+            st.divider()
+            
+            opts_assim = df_assim['papel'].tolist()
+            selected_assim = st.selectbox("🔎 Visualizar Assimetria (Preço vs Lucro x10)", opts_assim)
+            
+            if selected_assim:
+                # Reutiliza o get_chart_data, mas vamos manipular os dados para o gráfico específico
+                df_chart_a = get_chart_data(selected_assim)
+                
+                if df_chart_a is not None and len(df_chart_a) > 0:
+                    # Obter dados atuais do fundamentus para calcular o ' fator de conversão'
+                    # Sabemos que: Price / PL = EPS.
+                    # Vamos estimar o número de ações ou simplesmente normalizar a curva de lucro para a escala de preço baseada no P/L atual.
+                    
+                    try:
+                        row_fund = df_raw[df_raw['papel'] == selected_assim].iloc[0]
+                        current_pl = row_fund['pl']
+                        current_price = row_fund['cotacao']
+                        
+                        # EPS Anualizado Atual Estimado
+                        current_eps = current_price / current_pl if current_pl > 0 else 0
+                        
+                        # Total Net Income TTM from Chart Data
+                        last_total_income = df_chart_a['Lucro'].iloc[-1]
+                        
+                        # Estimated Shares (constante aproximada)
+                        est_shares = last_total_income / current_eps if current_eps > 0 else 1
+                        
+                        # Cria a série "Preço Justo (P/L 10x)"
+                        # Para cada ponto no histórico: (Lucro Total / Shares) * 10
+                        df_chart_a['Fair_Value_Line'] = (df_chart_a['Lucro'] / est_shares) * 10
+                        
+                        # Plot
+                        fig_a = go.Figure()
+                        
+                        # Linha de Preço
+                        fig_a.add_trace(go.Scatter(
+                            x=df_chart_a['Periodo'], y=df_chart_a['Cotação'], name="Preço (R$)",
+                            line=dict(color='#0000FF', width=4), mode='lines+markers',
+                            hovertemplate='Preço: R$ %{y:.2f}<extra></extra>'
+                        ))
+                        
+                        # Linha de "Valor Justo" (Lucro * 10)
+                        fig_a.add_trace(go.Scatter(
+                            x=df_chart_a['Periodo'], y=df_chart_a['Fair_Value_Line'], name="Lucro x 10 (P/L 10)",
+                            line=dict(color='#008000', width=4, dash='solid'), mode='lines+markers',
+                            hovertemplate='Valor (Lucro x10): R$ %{y:.2f}<extra></extra>'
+                        ))
+                        
+                        fig_a.update_layout(
+                            title=f"{selected_assim}: Assimetria (Linha Verde acima = Barato/P<10x)",
+                            xaxis=dict(title="Período"),
+                            yaxis=dict(title="Valor (R$)", side="right", showgrid=True),
+                            hovermode="x unified", height=500, legend=dict(orientation="h", y=1.1, x=0)
+                        )
+                        
+                        st.plotly_chart(fig_a, use_container_width=True)
+                        st.info(f"Nota: A linha verde representa quanto a ação custaria se fosse negociada a um P/L de 10x com base no lucro daquele período. Se a linha verde está acima da azul, o P/L efetivo era menor que 10 (Desconto).")
+                        
+                    except Exception as e:
+                        st.error(f"Erro ao calcular assimetria: {e}")
+                else:
+                    st.warning("Dados históricos insuficientes.")
+        else:
+            st.warning("Nenhuma empresa com P/L positivo abaixo de 10 encontrada com a liquidez selecionada.")
 
     show_affiliate_banners()
