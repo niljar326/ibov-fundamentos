@@ -19,7 +19,8 @@ st.set_page_config(
 )
 
 # Tenta importar fundamentus
-try: import fundamentus
+try:
+    import fundamentus
 except ImportError:
     st.error("Biblioteca 'fundamentus' não encontrada.")
     st.stop()
@@ -154,7 +155,8 @@ def get_ranking_data():
         df = fundamentus.get_resultado()
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
-        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y', 'roic']
+        # Adicionado 'pvp' para o cálculo do VPA
+        cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y', 'roic', 'pvp']
         for col in cols:
             if col in df.columns: df[col] = df[col].apply(clean_fundamentus_col)
             else: df[col] = 0.0
@@ -212,32 +214,43 @@ def get_magic_formula_data(df_base):
 def get_graham_data(df_base):
     if df_base.empty: return pd.DataFrame()
     df = df_base.copy()
+    
+    # Filtro de Liquidez
     df = df[df['liq2m'] > 100000]
-    df = df[df['pl'] > 0]
-    df = df.sort_values(by='liq2m', ascending=False).head(400)
     
+    # Selecionar as 200 empresas mais líquidas
+    df = df.sort_values(by='liq2m', ascending=False).head(200)
+    
+    # Garantir que PL e PVP sejam positivos para a raiz quadrada
+    df = df[(df['pl'] > 0) & (df['pvp'] > 0)]
+    
+    # Calcular LPA e VPA
     df['lpa'] = df['cotacao'] / df['pl']
-    Y_rate = 6.0 
-    growth_factor = 8.5 + (2 * 10) 
-    const_graham = 4.4
+    df['vpa'] = df['cotacao'] / df['pvp']
     
-    df['valor_intrinseco'] = (df['lpa'] * growth_factor * const_graham) / Y_rate
-    df['ratio_graham'] = df['cotacao'] / df['valor_intrinseco']
+    # Fórmula de Graham (Número de Graham): Raiz Quadrada (22.5 * LPA * VPA)
+    df['valor_intrinseco'] = (22.5 * df['lpa'] * df['vpa']) ** 0.5
+    
+    # Ratio: Valor da Fórmula / Cotação Atual
+    df['ratio_graham'] = df['valor_intrinseco'] / df['cotacao']
     
     def classify(r):
-        if r < 1.0: return "Barata"
-        elif r > 1.0: return "Cara"
-        else: return "Justo"
-        
+        if r > 1.0: return "Barata"
+        elif r == 1.0: return "No preço"
+        else: return "Cara"
+            
     df['Status'] = df['ratio_graham'].apply(classify)
-    df = df.sort_values(by='ratio_graham', ascending=True)
     
-    cols_out = ['papel', 'cotacao', 'valor_intrinseco', 'ratio_graham', 'Status', 'lpa']
+    # Ordenar pelas mais baratas (maior ratio significa maior valor em relacao ao preco)
+    df = df.sort_values(by='ratio_graham', ascending=False)
+    
+    cols_out = ['papel', 'cotacao', 'valor_intrinseco', 'ratio_graham', 'Status', 'lpa', 'vpa']
     df_final = df[cols_out].copy()
     
     df_final.rename(columns={
         'papel': 'Ativo', 'cotacao': 'Preço Atual',
-        'valor_intrinseco': 'Preço Justo (Graham)', 'ratio_graham': 'Ratio (P/V)', 'lpa': 'LPA'
+        'valor_intrinseco': 'Preço Justo (Graham)', 'ratio_graham': 'Upside/Downside', 
+        'lpa': 'LPA', 'vpa': 'VPA'
     }, inplace=True)
     
     return df_final.reset_index(drop=True)
@@ -617,10 +630,13 @@ with tab2:
     show_affiliate_banners()
 
 with tab3:
-    st.subheader("💎 Valuation: Método Graham (Adaptado)")
+    st.subheader("💎 Valuation: Método Graham (Clássico)")
     st.markdown("""
-    **Fórmula:** $V = \\frac{LPA \\times (8.5 + 2g) \\times 4.4}{Y}$
-    (Considerado Crescimento 10% e Yield Real 6%).
+    **Fórmula:** $\\sqrt{22,5 \\times LPA \\times VPA}$
+    
+    *   **LPA:** Lucro por Ação (Cotação / P.L)
+    *   **VPA:** Valor Patrimonial por Ação (Cotação / P.VP)
+    *   **Interpretação:** Se (Preço Justo / Cotação Atual) > 1, a ação é considerada **Barata**.
     """)
     
     if not st.session_state.app_liberado:
@@ -636,8 +652,9 @@ with tab3:
             styler_graham = df_graham.style.format({
                 "Preço Atual": "R$ {:.2f}",
                 "Preço Justo (Graham)": "R$ {:.2f}",
-                "Ratio (P/V)": "{:.2f}",
-                "LPA": "R$ {:.2f}"
+                "Upside/Downside": "{:.2f}",
+                "LPA": "R$ {:.2f}",
+                "VPA": "R$ {:.2f}"
             }).map(color_graham, subset=['Status'])
             st.dataframe(styler_graham, use_container_width=True, hide_index=True)
         else: st.info("Nenhuma ação atende aos critérios.")
