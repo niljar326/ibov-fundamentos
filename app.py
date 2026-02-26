@@ -26,28 +26,21 @@ except ImportError:
     st.stop()
 
 # --- 2. GERENCIAMENTO DE ESTADO ---
-if 'access_key_tab1_vFinal' not in st.session_state: st.session_state.access_key_tab1_vFinal = False
-if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key_tab3_vFinal = False
-if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
-if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
+if 'tab5_stocks_ready' not in st.session_state: st.session_state.tab5_stocks_ready = []
 
-# Removemos chaves de cache complexas manuais e confiamos no st.cache_data do Streamlit
-
-def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
-def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
 def liberar_acesso(): st.session_state.app_liberado = True
-def close_expander(): st.session_state.expander_open = False
 
-# --- CSS ---
+# --- CSS PERSONALIZADO (Para deixar o Radio parecido com Abas) ---
 st.markdown("""
     <style>
     [data-testid="stDataFrame"] table tr th { text-align: right !important; }
     [data-testid="stDataFrame"] table tr td { text-align: left !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0 0; }
-    .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 3px solid #ff4b4b; }
-    div.stButton > button { width: 100%; border-radius: 8px; font-weight: bold; }
+    div.row-widget.stRadio > div { flex-direction: row; gap: 20px; justify-content: center; }
+    div.row-widget.stRadio > div > label { 
+        background-color: #f0f2f6; padding: 10px 20px; border-radius: 10px; cursor: pointer; border: 1px solid #ddd;
+    }
+    div.row-widget.stRadio > div > label[data-baseweb="radio"] { background-color: #ff4b4b; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -535,10 +528,7 @@ with st.spinner('Analisando mercado...'):
     df_graham = get_graham_data(df_raw)
     df_eps = get_eps_data(df_raw)
 
-    # --- CORREÇÃO DO ERRO DE ABA ---
-    # Calculamos a lista de Assimetria AQUI, FORA DAS ABAS.
-    # Isso garante que a lista já existe na memória quando a interface é desenhada.
-    # O Streamlit não precisará reprocessar nada ao clicar na aba, mantendo o foco.
+    # --- CÁLCULO ASSIMETRIA ---
     asymmetry_stocks_global = []
     
     if st.session_state.app_liberado:
@@ -547,10 +537,14 @@ with st.spinner('Analisando mercado...'):
         # Chama função cacheada
         asymmetry_stocks_global = get_asymmetry_candidates(candidates_list)
 
-# Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria"])
+# --- MENU DE NAVEGAÇÃO (SUBSTITUINDO ST.TABS) ---
+# Isso resolve o problema da aba resetar, pois 'menu_escolha' é uma variável de estado.
+menu_opcoes = ["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria"]
+menu_escolha = st.radio("", menu_opcoes, horizontal=True, label_visibility="collapsed")
 
-with tab1:
+# --- CONTEÚDO DAS ABAS (AGORA CONTROLADO PELO RADIO) ---
+
+if menu_escolha == "🏆 Ranking Fundamentalista":
     st.markdown("Oportunidades Fundamentalistas.")
     if not st.session_state.app_liberado:
         show_lock_screen("tab1") 
@@ -582,14 +576,12 @@ with tab1:
         st.divider()
         st.subheader("📈 Gráfico Cotação vs Lucro/Receita (4 Anos + TTM)")
         
-        # Correção da lista para o seletor (usando 'papel')
         opts = df_liquid_200['papel'].tolist()
         if 'LREN3' not in opts and not df_raw[df_raw['papel'] == 'LREN3'].empty:
             opts.append('LREN3')
             
         idx = opts.index('LREN3') if 'LREN3' in opts else 0
-        with st.expander("🔎 Selecionar Ação (Top 200 Líquidas)", expanded=st.session_state.expander_open):
-            selected = st.selectbox("Ativo:", opts, index=idx, on_change=close_expander)
+        selected = st.selectbox("Ativo:", opts, index=idx)
         
         if selected:
             df_chart = get_chart_data(selected)
@@ -619,7 +611,6 @@ with tab1:
                     hovermode="x unified", height=500, legend=dict(orientation="h", y=1.1, x=0), barmode='overlay', margin=dict(t=80) 
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            else: st.warning(f"Dados históricos insuficientes para montar o gráfico de {selected}.")
         
         st.divider()
         c1, c2 = st.columns(2)
@@ -636,7 +627,7 @@ with tab1:
 
     show_affiliate_banners()
 
-with tab2:
+elif menu_escolha == "✨ Fórmula Mágica":
     st.subheader("✨ Fórmula Mágica (Top 40)")
     st.markdown("""
     **Metodologia:**
@@ -668,7 +659,7 @@ with tab2:
         else: st.warning("Não foi possível calcular o ranking hoje.")
     show_affiliate_banners()
 
-with tab3:
+elif menu_escolha == "💎 Graham":
     st.subheader("💎 Valuation: Método Graham (Clássico)")
     st.markdown("""
     **Fórmula:** $\\sqrt{22,5 \\times LPA \\times VPA}$
@@ -699,7 +690,7 @@ with tab3:
         else: st.info("Nenhuma ação atende aos critérios.")
     show_affiliate_banners()
 
-with tab4:
+elif menu_escolha == "📈 EPS Diluído":
     st.subheader("📈 EPS Diluído (LPA) Trimestral")
     
     with st.expander("ℹ️ O que é EPS Diluído?", expanded=False):
@@ -728,12 +719,11 @@ with tab4:
         
         with col_eps_right:
             st.markdown("#### Gráfico com Indicador Earnings (PETR4)")
-            # Adiciona o estudo "Earnings" que mostra os balanços no gráfico
             show_chart_widget("BMFBOVESPA:PETR4", interval="D", studies=["Earnings@tv-basicstudies"])
 
     show_affiliate_banners()
 
-with tab5:
+elif menu_escolha == "📉 Assimetria":
     st.subheader("📉 Assimetria: Lucro acima do Preço")
     st.markdown("""
     **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m).
