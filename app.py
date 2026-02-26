@@ -26,15 +26,13 @@ except ImportError:
     st.stop()
 
 # --- 2. GERENCIAMENTO DE ESTADO ---
-# Inicializa variáveis de sessão para evitar recálculos que resetam as abas
 if 'access_key_tab1_vFinal' not in st.session_state: st.session_state.access_key_tab1_vFinal = False
 if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key_tab3_vFinal = False
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
 
-# CRUCIAL: Variável para armazenar a lista de Assimetria e não rodar o loop novamente
-if 'tab5_stocks_ready' not in st.session_state: st.session_state.tab5_stocks_ready = []
+# Removemos chaves de cache complexas manuais e confiamos no st.cache_data do Streamlit
 
 def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
 def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
@@ -436,13 +434,14 @@ def get_chart_data(ticker):
     except Exception as e:
         return None
 
-# --- NOVA FUNÇÃO CACHEADA PARA ASSIMETRIA ---
-@st.cache_data(ttl=3600, show_spinner="Analisando Assimetrias (Isso ocorre apenas 1x/hora)...")
+# --- NOVA FUNÇÃO CACHEADA PARA ASSIMETRIA (TOP 100) ---
+@st.cache_data(ttl=3600, show_spinner="Processando Top 100 Assimetrias (Isso ocorre apenas 1x/hora)...")
 def get_asymmetry_candidates(ticker_list):
     valid_stocks = []
-    # Processa apenas se tiver dados, em blocos
+    # Loop seguro em try/except para evitar crash
     for tick in ticker_list:
         try:
+            # Reutiliza get_chart_data que já é cacheado
             d_ch = get_chart_data(tick)
             if d_ch is not None and len(d_ch) > 1:
                 p_vals = d_ch['Cotação']
@@ -525,14 +524,28 @@ st.warning("⚠️ Utilize os dados apenas para estudo.")
 
 with st.spinner('Analisando mercado...'):
     df_raw = get_ranking_data()
+    
     # Preparar DataFrame de Top 200 Liquidez > 100k para uso geral
     df_liquid_200 = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(200)
     
+    # Cálculos das outras abas
     df_best = apply_best_filters(df_raw)
     df_warning = get_risk_table(df_raw)
     df_magic = get_magic_formula_data(df_raw)
     df_graham = get_graham_data(df_raw)
     df_eps = get_eps_data(df_raw)
+
+    # --- CORREÇÃO DO ERRO DE ABA ---
+    # Calculamos a lista de Assimetria AQUI, FORA DAS ABAS.
+    # Isso garante que a lista já existe na memória quando a interface é desenhada.
+    # O Streamlit não precisará reprocessar nada ao clicar na aba, mantendo o foco.
+    asymmetry_stocks_global = []
+    
+    if st.session_state.app_liberado:
+        # Pega top 100 para análise
+        candidates_list = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(100)['papel'].tolist()
+        # Chama função cacheada
+        asymmetry_stocks_global = get_asymmetry_candidates(candidates_list)
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria"])
@@ -731,28 +744,19 @@ with tab5:
     if not st.session_state.app_liberado:
         show_lock_screen("tab5")
     else:
-        # 1. Definir lista de candidatos (Top 100)
-        candidates_list = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(100)['papel'].tolist()
-        
-        # 2. Verificar se já temos a lista calculada em SESSÃO. 
-        #    Se não, chama a função pesada (cacheada) e salva na sessão.
-        if not st.session_state.tab5_stocks_ready:
-             st.session_state.tab5_stocks_ready = get_asymmetry_candidates(candidates_list)
-
-        valid_asymmetry_stocks = st.session_state.tab5_stocks_ready
-
-        if valid_asymmetry_stocks:
-            st.success(f"Encontradas {len(valid_asymmetry_stocks)} ações com possível assimetria positiva.")
+        # AQUI USAMOS A LISTA JÁ CALCULADA FORA DAS ABAS
+        if asymmetry_stocks_global:
+            st.success(f"Encontradas {len(asymmetry_stocks_global)} ações com possível assimetria positiva.")
             
-            # 3. O Selectbox agora usa a lista estática da sessão
-            #    Isso impede que o Streamlit "pense" e reset a aba.
+            # Key fixa para evitar que o componente seja recriado
             sel_assim = st.selectbox(
                 "Selecione Ativo com Assimetria Detectada:", 
-                valid_asymmetry_stocks, 
-                key="selectbox_tab5_static_v2"
+                asymmetry_stocks_global, 
+                key="selectbox_tab5_fixed_final"
             )
             
             if sel_assim:
+                # Código de gráfico reutilizado
                 df_chart = get_chart_data(sel_assim)
                 if df_chart is not None:
                     fig = go.Figure()
