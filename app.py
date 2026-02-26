@@ -32,6 +32,9 @@ if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
 
+# Cache específico para a aba de Assimetria para persistência
+if 'asymmetry_cache' not in st.session_state: st.session_state.asymmetry_cache = []
+
 def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
 def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
 def liberar_acesso(): st.session_state.app_liberado = True
@@ -155,7 +158,6 @@ def get_ranking_data():
         df = fundamentus.get_resultado()
         df.reset_index(inplace=True)
         df.rename(columns={'index': 'papel'}, inplace=True)
-        # Adicionado 'pvp' para o cálculo do VPA
         cols = ['pl', 'roe', 'dy', 'evebit', 'cotacao', 'liq2m', 'mrgliq', 'divbpatr', 'c5y', 'roic', 'pvp']
         for col in cols:
             if col in df.columns: df[col] = df[col].apply(clean_fundamentus_col)
@@ -275,7 +277,6 @@ def get_eps_data(df_base):
             if fin.empty: continue
             
             # Tenta encontrar linhas de EPS
-            # Geralmente 'Basic EPS' ou 'Diluted EPS'
             eps_row = None
             for idx in fin.index:
                 if 'Diluted EPS' in str(idx) or 'Basic EPS' in str(idx):
@@ -287,7 +288,6 @@ def get_eps_data(df_base):
                 val = fin.loc[eps_row].iloc[0]
                 date_ref = fin.columns[0]
                 
-                # Filtra apenas se EPS Trimestral > 1.0
                 if val > 1.0:
                     eps_results.append({
                         'Ativo': ticker,
@@ -699,7 +699,7 @@ with tab5:
     st.markdown("""
     **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m).
     *   **Análise Ampliada:** O robô agora verifica as **top 100 ações** mais líquidas da bolsa (> R$ 100k/dia) em busca dessa assimetria.
-    *   *Nota:* O processo pode levar alguns instantes devido ao volume de dados.
+    *   *Nota:* O processo pode levar alguns instantes apenas na primeira vez.
     """)
     
     if not st.session_state.app_liberado:
@@ -710,17 +710,22 @@ with tab5:
         
         valid_asymmetry_stocks = []
 
-        if 'asymmetry_cache' not in st.session_state:
+        # Checa cache para evitar recálculo que pode resetar a página
+        if not st.session_state.asymmetry_cache:
             # Barra de progresso para UX
             progress_text = "Varrendo mercado em busca de assimetrias..."
             my_bar = st.progress(0, text=progress_text)
             total_tickers = len(candidates_list)
             
+            # Lista temporária
+            temp_results = []
+            
             with st.spinner("Analisando gráficos históricos (Top 100)... Por favor, aguarde."):
                 for idx, tick in enumerate(candidates_list):
-                    # Atualiza barra de progresso
-                    progress_percent = int(((idx + 1) / total_tickers) * 100)
-                    my_bar.progress(min(progress_percent, 100), text=f"Analisando {tick} ({idx+1}/{total_tickers})")
+                    # Atualiza barra de progresso a cada 5 itens para suavizar renderização
+                    if idx % 5 == 0:
+                        progress_percent = int(((idx + 1) / total_tickers) * 100)
+                        my_bar.progress(min(progress_percent, 100), text=f"Analisando {tick} ({idx+1}/{total_tickers})")
                     
                     d_ch = get_chart_data(tick)
                     if d_ch is not None and len(d_ch) > 1:
@@ -743,17 +748,24 @@ with tab5:
                                 
                                 # Se a posição do lucro for maior que a do preço, visualmente a linha verde está acima da azul
                                 if l_pos > p_pos:
-                                    valid_asymmetry_stocks.append(tick)
+                                    temp_results.append(tick)
                         except: pass
             
             my_bar.empty() # Remove barra de progresso ao fim
-            st.session_state.asymmetry_cache = valid_asymmetry_stocks
+            st.session_state.asymmetry_cache = temp_results
+            valid_asymmetry_stocks = temp_results
         else:
             valid_asymmetry_stocks = st.session_state.asymmetry_cache
 
         if valid_asymmetry_stocks:
             st.success(f"Encontradas {len(valid_asymmetry_stocks)} ações com possível assimetria positiva.")
-            sel_assim = st.selectbox("Selecione Ativo com Assimetria Detectada:", valid_asymmetry_stocks)
+            
+            # --- FIX: ADICIONADA KEY ÚNICA PARA MANTER O FOCO NA ABA 5 ---
+            sel_assim = st.selectbox(
+                "Selecione Ativo com Assimetria Detectada:", 
+                valid_asymmetry_stocks, 
+                key="selectbox_tab5_asymmetry"
+            )
             
             if sel_assim:
                 # REUTILIZAÇÃO EXATA DO CÓDIGO DO GRÁFICO DA ABA 1
