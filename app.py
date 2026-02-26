@@ -32,9 +32,6 @@ if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
 
-# Cache específico para a aba de Assimetria para persistência
-if 'asymmetry_cache' not in st.session_state: st.session_state.asymmetry_cache = []
-
 def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
 def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
 def liberar_acesso(): st.session_state.app_liberado = True
@@ -435,6 +432,30 @@ def get_chart_data(ticker):
     except Exception as e:
         return None
 
+# --- NOVA FUNÇÃO CACHEADA PARA ASSIMETRIA ---
+@st.cache_data(ttl=3600, show_spinner="Analisando Top 100 Ações (Assimetria)... Isso ocorre apenas uma vez por hora.")
+def get_asymmetry_candidates(ticker_list):
+    valid_stocks = []
+    for tick in ticker_list:
+        try:
+            d_ch = get_chart_data(tick)
+            if d_ch is not None and len(d_ch) > 1:
+                p_vals = d_ch['Cotação']
+                l_vals = d_ch['Lucro']
+                p_min, p_max = p_vals.min(), p_vals.max()
+                l_min, l_max = l_vals.min(), l_vals.max()
+                
+                if p_max > p_min and l_max > l_min:
+                    current_p = p_vals.iloc[-1]
+                    current_l = l_vals.iloc[-1]
+                    p_pos = (current_p - p_min) / (p_max - p_min)
+                    l_pos = (current_l - l_min) / (l_max - l_min)
+                    
+                    if l_pos > p_pos:
+                        valid_stocks.append(tick)
+        except: pass
+    return valid_stocks
+
 @st.cache_data(ttl=3600*6)
 def get_latest_dividends(ticker_list):
     divs_data = []
@@ -699,63 +720,17 @@ with tab5:
     st.markdown("""
     **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m).
     *   **Análise Ampliada:** O robô agora verifica as **top 100 ações** mais líquidas da bolsa (> R$ 100k/dia) em busca dessa assimetria.
-    *   *Nota:* O processo pode levar alguns instantes apenas na primeira vez.
+    *   *Nota:* O processo pode levar alguns instantes na primeira vez, depois fica instantâneo (cacheado).
     """)
     
     if not st.session_state.app_liberado:
         show_lock_screen("tab5")
     else:
-        # AUMENTADO: Top 100 Liquidez > 100k para processamento máximo possível sem timeout
+        # AUMENTADO: Top 100 Liquidez > 100k
         candidates_list = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(100)['papel'].tolist()
         
-        valid_asymmetry_stocks = []
-
-        # Checa cache para evitar recálculo que pode resetar a página
-        if not st.session_state.asymmetry_cache:
-            # Barra de progresso para UX
-            progress_text = "Varrendo mercado em busca de assimetrias..."
-            my_bar = st.progress(0, text=progress_text)
-            total_tickers = len(candidates_list)
-            
-            # Lista temporária
-            temp_results = []
-            
-            with st.spinner("Analisando gráficos históricos (Top 100)... Por favor, aguarde."):
-                for idx, tick in enumerate(candidates_list):
-                    # Atualiza barra de progresso a cada 5 itens para suavizar renderização
-                    if idx % 5 == 0:
-                        progress_percent = int(((idx + 1) / total_tickers) * 100)
-                        my_bar.progress(min(progress_percent, 100), text=f"Analisando {tick} ({idx+1}/{total_tickers})")
-                    
-                    d_ch = get_chart_data(tick)
-                    if d_ch is not None and len(d_ch) > 1:
-                        try:
-                            # Normalização Min-Max para simular a escala visual do Plotly
-                            p_vals = d_ch['Cotação']
-                            l_vals = d_ch['Lucro']
-                            
-                            p_min, p_max = p_vals.min(), p_vals.max()
-                            l_min, l_max = l_vals.min(), l_vals.max()
-                            
-                            # Evita divisão por zero
-                            if p_max > p_min and l_max > l_min:
-                                current_p = p_vals.iloc[-1]
-                                current_l = l_vals.iloc[-1]
-                                
-                                # Posição % no eixo (0.0 a 1.0)
-                                p_pos = (current_p - p_min) / (p_max - p_min)
-                                l_pos = (current_l - l_min) / (l_max - l_min)
-                                
-                                # Se a posição do lucro for maior que a do preço, visualmente a linha verde está acima da azul
-                                if l_pos > p_pos:
-                                    temp_results.append(tick)
-                        except: pass
-            
-            my_bar.empty() # Remove barra de progresso ao fim
-            st.session_state.asymmetry_cache = temp_results
-            valid_asymmetry_stocks = temp_results
-        else:
-            valid_asymmetry_stocks = st.session_state.asymmetry_cache
+        # USA FUNÇÃO CACHEADA - ISSO PREVINE O REFRESH DA PÁGINA
+        valid_asymmetry_stocks = get_asymmetry_candidates(candidates_list)
 
         if valid_asymmetry_stocks:
             st.success(f"Encontradas {len(valid_asymmetry_stocks)} ações com possível assimetria positiva.")
@@ -764,7 +739,7 @@ with tab5:
             sel_assim = st.selectbox(
                 "Selecione Ativo com Assimetria Detectada:", 
                 valid_asymmetry_stocks, 
-                key="selectbox_tab5_asymmetry"
+                key="selectbox_tab5_asymmetry_cached"
             )
             
             if sel_assim:
