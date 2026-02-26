@@ -697,25 +697,31 @@ with tab4:
 with tab5:
     st.subheader("📉 Assimetria: Lucro acima do Preço")
     st.markdown("""
-    **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m), indicando um possível desconto relativo ao histórico da própria empresa.
-    *   O gráfico utiliza as mesmas escalas originais (com eixos independentes ajustados automaticamente pelo Plotly).
+    **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m).
+    *   **Análise Ampliada:** O robô agora verifica as **top 100 ações** mais líquidas da bolsa (> R$ 100k/dia) em busca dessa assimetria.
+    *   *Nota:* O processo pode levar alguns instantes devido ao volume de dados.
     """)
     
     if not st.session_state.app_liberado:
         show_lock_screen("tab5")
     else:
-        # Filtra Top 40 Liquidez para processamento rápido do filtro visual
-        candidates_list = df_raw[df_raw['liq2m'] > 200000].sort_values(by='liq2m', ascending=False).head(40)['papel'].tolist()
+        # AUMENTADO: Top 100 Liquidez > 100k para processamento máximo possível sem timeout
+        candidates_list = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(100)['papel'].tolist()
         
         valid_asymmetry_stocks = []
 
-        # Algoritmo de pré-processamento para filtrar apenas os gráficos onde Lucro > Preço visualmente
-        # Como o gráfico tem dois eixos autoscaled, "visualamente acima" significa que 
-        # a posição relativa (0 a 100%) do Lucro atual em seu eixo é maior que a do Preço atual em seu eixo.
-        
         if 'asymmetry_cache' not in st.session_state:
-            with st.spinner("Filtrando gráficos com assimetria visual (pode levar alguns segundos)..."):
-                for tick in candidates_list:
+            # Barra de progresso para UX
+            progress_text = "Varrendo mercado em busca de assimetrias..."
+            my_bar = st.progress(0, text=progress_text)
+            total_tickers = len(candidates_list)
+            
+            with st.spinner("Analisando gráficos históricos (Top 100)... Por favor, aguarde."):
+                for idx, tick in enumerate(candidates_list):
+                    # Atualiza barra de progresso
+                    progress_percent = int(((idx + 1) / total_tickers) * 100)
+                    my_bar.progress(min(progress_percent, 100), text=f"Analisando {tick} ({idx+1}/{total_tickers})")
+                    
                     d_ch = get_chart_data(tick)
                     if d_ch is not None and len(d_ch) > 1:
                         try:
@@ -739,11 +745,14 @@ with tab5:
                                 if l_pos > p_pos:
                                     valid_asymmetry_stocks.append(tick)
                         except: pass
+            
+            my_bar.empty() # Remove barra de progresso ao fim
             st.session_state.asymmetry_cache = valid_asymmetry_stocks
         else:
             valid_asymmetry_stocks = st.session_state.asymmetry_cache
 
         if valid_asymmetry_stocks:
+            st.success(f"Encontradas {len(valid_asymmetry_stocks)} ações com possível assimetria positiva.")
             sel_assim = st.selectbox("Selecione Ativo com Assimetria Detectada:", valid_asymmetry_stocks)
             
             if sel_assim:
@@ -777,6 +786,6 @@ with tab5:
                     st.plotly_chart(fig, use_container_width=True)
                     st.success("✅ A linha pontilhada verde (Lucro) termina visualmente acima da linha azul (Preço) neste gráfico.")
         else:
-            st.warning("Nenhuma ação encontrada com essa configuração visual no momento.")
+            st.warning("Nenhuma ação encontrada com essa configuração visual no momento (Top 100 analisadas).")
 
     show_affiliate_banners()
