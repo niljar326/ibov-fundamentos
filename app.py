@@ -26,11 +26,15 @@ except ImportError:
     st.stop()
 
 # --- 2. GERENCIAMENTO DE ESTADO ---
+# Inicializa variáveis de sessão para evitar recálculos que resetam as abas
 if 'access_key_tab1_vFinal' not in st.session_state: st.session_state.access_key_tab1_vFinal = False
 if 'access_key_tab3_vFinal' not in st.session_state: st.session_state.access_key_tab3_vFinal = False
 if 'tv_symbol' not in st.session_state: st.session_state.tv_symbol = "BMFBOVESPA:LREN3"
 if 'expander_open' not in st.session_state: st.session_state.expander_open = True
 if 'app_liberado' not in st.session_state: st.session_state.app_liberado = False
+
+# CRUCIAL: Variável para armazenar a lista de Assimetria e não rodar o loop novamente
+if 'tab5_stocks_ready' not in st.session_state: st.session_state.tab5_stocks_ready = []
 
 def unlock_tab1(): st.session_state.access_key_tab1_vFinal = True
 def unlock_tab3(): st.session_state.access_key_tab3_vFinal = True
@@ -433,9 +437,10 @@ def get_chart_data(ticker):
         return None
 
 # --- NOVA FUNÇÃO CACHEADA PARA ASSIMETRIA ---
-@st.cache_data(ttl=3600, show_spinner="Analisando Top 100 Ações (Assimetria)... Isso ocorre apenas uma vez por hora.")
+@st.cache_data(ttl=3600, show_spinner="Analisando Assimetrias (Isso ocorre apenas 1x/hora)...")
 def get_asymmetry_candidates(ticker_list):
     valid_stocks = []
+    # Processa apenas se tiver dados, em blocos
     for tick in ticker_list:
         try:
             d_ch = get_chart_data(tick)
@@ -529,7 +534,7 @@ with st.spinner('Analisando mercado...'):
     df_graham = get_graham_data(df_raw)
     df_eps = get_eps_data(df_raw)
 
-# Atualizado para incluir Tab 5
+# Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham", "📈 EPS Diluído", "📉 Assimetria"])
 
 with tab1:
@@ -720,30 +725,34 @@ with tab5:
     st.markdown("""
     **Filtro Visual:** Esta aba exibe apenas ações onde a linha de **Lucro Líquido** está visualmente acima da linha de **Cotação** no ponto atual (Últimos 12m).
     *   **Análise Ampliada:** O robô agora verifica as **top 100 ações** mais líquidas da bolsa (> R$ 100k/dia) em busca dessa assimetria.
-    *   *Nota:* O processo pode levar alguns instantes na primeira vez, depois fica instantâneo (cacheado).
+    *   *Nota:* O processo ocorre apenas uma vez por hora (dados cacheados).
     """)
     
     if not st.session_state.app_liberado:
         show_lock_screen("tab5")
     else:
-        # AUMENTADO: Top 100 Liquidez > 100k
+        # 1. Definir lista de candidatos (Top 100)
         candidates_list = df_raw[df_raw['liq2m'] > 100000].sort_values(by='liq2m', ascending=False).head(100)['papel'].tolist()
         
-        # USA FUNÇÃO CACHEADA - ISSO PREVINE O REFRESH DA PÁGINA
-        valid_asymmetry_stocks = get_asymmetry_candidates(candidates_list)
+        # 2. Verificar se já temos a lista calculada em SESSÃO. 
+        #    Se não, chama a função pesada (cacheada) e salva na sessão.
+        if not st.session_state.tab5_stocks_ready:
+             st.session_state.tab5_stocks_ready = get_asymmetry_candidates(candidates_list)
+
+        valid_asymmetry_stocks = st.session_state.tab5_stocks_ready
 
         if valid_asymmetry_stocks:
             st.success(f"Encontradas {len(valid_asymmetry_stocks)} ações com possível assimetria positiva.")
             
-            # --- FIX: ADICIONADA KEY ÚNICA PARA MANTER O FOCO NA ABA 5 ---
+            # 3. O Selectbox agora usa a lista estática da sessão
+            #    Isso impede que o Streamlit "pense" e reset a aba.
             sel_assim = st.selectbox(
                 "Selecione Ativo com Assimetria Detectada:", 
                 valid_asymmetry_stocks, 
-                key="selectbox_tab5_asymmetry_cached"
+                key="selectbox_tab5_static_v2"
             )
             
             if sel_assim:
-                # REUTILIZAÇÃO EXATA DO CÓDIGO DO GRÁFICO DA ABA 1
                 df_chart = get_chart_data(sel_assim)
                 if df_chart is not None:
                     fig = go.Figure()
