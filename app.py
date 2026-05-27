@@ -713,10 +713,23 @@ def clean_dict_keys(d):
             cleaned[cleaned_key] = v
     return cleaned
 
+def get_dynamic_periods():
+    current_year = datetime.now().year
+    return [str(current_year - 4), str(current_year - 3), str(current_year - 2), str(current_year - 1), "Últimos 12m"]
+
+def clean_and_update_periods(d):
+    cleaned = clean_dict_keys(d)
+    periods = get_dynamic_periods()
+    if "historico" in cleaned and isinstance(cleaned["historico"], list):
+        for idx, item in enumerate(cleaned["historico"]):
+            if idx < len(periods):
+                item["periodo"] = periods[idx]
+    return cleaned
+
 # dynamic inflator to achieve exactly 100 stocks
 def inflate_stock_history(stock_seed):
     import math
-    periods = ["2021", "2022", "2023", "2024", "Últimos 12m"]
+    periods = get_dynamic_periods()
     
     # Process with cleaned seed keys first
     stock_seed = clean_dict_keys(stock_seed)
@@ -747,7 +760,7 @@ def inflate_stock_history(stock_seed):
         if is_asymmetric and periodo == "Últimos 12m":
             profit_multiplier = 1.45
             price_multiplier = 0.88
-        elif is_asymmetric and periodo == "2024":
+        elif is_asymmetric and periodo == periods[3]:
             profit_multiplier = 1.30
             price_multiplier = 1.25
             
@@ -765,7 +778,7 @@ def inflate_stock_history(stock_seed):
     stock_seed["historico"] = historico
     return stock_seed
 
-ORIGINAL_STOCKS_CLEANED = [clean_dict_keys(s) for s in ORIGINAL_STOCKS]
+ORIGINAL_STOCKS_CLEANED = [clean_and_update_periods(s) for s in ORIGINAL_STOCKS]
 INFLATED_EXTRA = [inflate_stock_history(s) for s in EXTRA_SEED]
 STOCK_DATABASE = (ORIGINAL_STOCKS_CLEANED + INFLATED_EXTRA)[:100]
 
@@ -979,6 +992,10 @@ def render_custom_stock_chart(selected_stock, title=""):
     
     fig.update_layout(
         title=title if title else f"Histórico Consolidado de {selected_stock['papel']} ({selected_stock['empresa']})",
+        xaxis=dict(
+            type='category',
+            title="Período"
+        ),
         yaxis=dict(
             title="Trajetória Relativa (Normalizada 0-1)",
             side="left",
