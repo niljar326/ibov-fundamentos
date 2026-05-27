@@ -717,9 +717,23 @@ def get_dynamic_periods():
     current_year = datetime.now().year
     return [str(current_year - 4), str(current_year - 3), str(current_year - 2), str(current_year - 1), "Últimos 12m"]
 
+def get_latest_completed_quarter_str():
+    now = datetime.now()
+    year = now.year
+    month = now.month
+    if month <= 3:
+        return f"4T{year-1}"
+    elif month <= 6:
+        return f"1T{year}"
+    elif month <= 9:
+        return f"2T{year}"
+    else:
+        return f"3T{year}"
+
 def clean_and_update_periods(d):
     cleaned = clean_dict_keys(d)
     periods = get_dynamic_periods()
+    cleaned["dataRef"] = get_latest_completed_quarter_str()
     if "historico" in cleaned and isinstance(cleaned["historico"], list):
         for idx, item in enumerate(cleaned["historico"]):
             if idx < len(periods):
@@ -776,6 +790,7 @@ def inflate_stock_history(stock_seed):
         })
         
     stock_seed["historico"] = historico
+    stock_seed["dataRef"] = get_latest_completed_quarter_str()
     return stock_seed
 
 def populate_divida_liquida_ebitda(stock):
