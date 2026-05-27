@@ -701,10 +701,32 @@ EXTRA_SEED = [
   {"papel": "SOMA3", "empresa": "Grupo Soma ON", "cotacao": 6.15, "pl": 14.10, "pvp": 0.85, "evebit": 9.80, "roe": 0.060, "roic": 0.052, "dy": 0.021, "mrgliq": 0.038, "liq2m": 48000000, "divbpatr": 0.95, "lpa": 0.44, "vpa": 7.24, "epsTrimestral": 0.11, "dataRef": "31/12/2024", "quedaLucro": "Estável", "situacao": "Saudável"}
 ]
 
+def clean_dict_keys(d):
+    cleaned = {}
+    for k, v in d.items():
+        cleaned_key = str(k).strip().replace(":", "")
+        if isinstance(v, list):
+            cleaned[cleaned_key] = [clean_dict_keys(item) if isinstance(item, dict) else item for item in v]
+        elif isinstance(v, dict):
+            cleaned[cleaned_key] = clean_dict_keys(v)
+        else:
+            cleaned[cleaned_key] = v
+    return cleaned
+
 # dynamic inflator to achieve exactly 100 stocks
 def inflate_stock_history(stock_seed):
     import math
     periods = ["2021", "2022", "2023", "2024", "Últimos 12m"]
+    
+    # Process with cleaned seed keys first
+    stock_seed = clean_dict_keys(stock_seed)
+    
+    # ensure standard lpa/vpa are populated if missing on cleaning
+    if "lpa" not in stock_seed:
+        stock_seed["lpa"] = 1.0
+    if "vpa" not in stock_seed:
+        stock_seed["vpa"] = 10.0
+        
     # unique determinism based on papel string
     char_sum = sum(ord(char) for char in stock_seed["papel"])
     base_receita_val = (10 + (char_sum % 90)) * 1e9
@@ -741,21 +763,11 @@ def inflate_stock_history(stock_seed):
         })
         
     stock_seed["historico"] = historico
-    # Fix any keys starting with space or missing keys to clean up seed objects
-    cleaned_seed = {}
-    for k, v in stock_seed.items():
-        cleaned_key = k.strip().replace(":", "")
-        cleaned_seed[cleaned_key] = v
-        
-    # ensure standard lpa/vpa are populated if missing on cleaning
-    if "lpa" not in cleaned_seed:
-        cleaned_seed["lpa"] = cleaned_seed.get("lpa", 1.0)
-    if "vpa" not in cleaned_seed:
-        cleaned_seed["vpa"] = cleaned_seed.get("vpa", 10.0)
-    return cleaned_seed
+    return stock_seed
 
+ORIGINAL_STOCKS_CLEANED = [clean_dict_keys(s) for s in ORIGINAL_STOCKS]
 INFLATED_EXTRA = [inflate_stock_history(s) for s in EXTRA_SEED]
-STOCK_DATABASE = (ORIGINAL_STOCKS + INFLATED_EXTRA)[:100]
+STOCK_DATABASE = (ORIGINAL_STOCKS_CLEANED + INFLATED_EXTRA)[:100]
 
 MARKET_NEWS = [
     {"source": "InfoMoney", "title": "Ibovespa opera em alta no aguardo de dados de inflação IPCA", "link": "https://www.infomoney.com.br/economia/copom-sinaliza-postura-vigilante/"},
