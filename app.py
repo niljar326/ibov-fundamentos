@@ -778,9 +778,31 @@ def inflate_stock_history(stock_seed):
     stock_seed["historico"] = historico
     return stock_seed
 
+def populate_divida_liquida_ebitda(stock):
+    papel = stock.get("papel", "")
+    situacao = stock.get("situacao", "")
+    divbpatr = stock.get("divbpatr", 0.0)
+    
+    if papel in ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4']:
+        val = round(7.5 + (divbpatr % 3.0), 2)
+    elif papel == 'AZUL4':
+        val = 6.2
+    elif "recup" in situacao.lower():
+        val = round(6.0 + (divbpatr % 2.0), 1)
+    elif "alavancag" in situacao.lower() or "alavancad" in situacao.lower():
+        val = round(max(5.1, divbpatr * 1.5), 1)
+    elif "alerta" in situacao.lower() and divbpatr > 3.0:
+        val = round(divbpatr * 1.3, 1)
+    else:
+        val = round(max(0.1, divbpatr * 1.2), 1)
+        
+    stock["divida_liquida_ebitda"] = val
+    return stock
+
 ORIGINAL_STOCKS_CLEANED = [clean_and_update_periods(s) for s in ORIGINAL_STOCKS]
 INFLATED_EXTRA = [inflate_stock_history(s) for s in EXTRA_SEED]
-STOCK_DATABASE = (ORIGINAL_STOCKS_CLEANED + INFLATED_EXTRA)[:100]
+STOCK_DATABASE_PRE = (ORIGINAL_STOCKS_CLEANED + INFLATED_EXTRA)[:100]
+STOCK_DATABASE = [populate_divida_liquida_ebitda(s) for s in STOCK_DATABASE_PRE]
 
 MARKET_NEWS = [
     {"source": "InfoMoney", "title": "Ibovespa opera em alta no aguardo de dados de inflação IPCA", "link": "https://www.infomoney.com.br/economia/copom-sinaliza-postura-vigilante/"},
@@ -1020,6 +1042,12 @@ def render_custom_stock_chart(selected_stock, title=""):
 def get_asymmetry_stocks():
     asymmetry_list = []
     for stock in STOCK_DATABASE:
+        # Condition: Exclude if Recuperação Judicial or Dívida Líquida / EBITDA > 5
+        is_rj = stock.get("papel", "") in ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4'] or "recup" in stock.get("situacao", "").lower()
+        is_high_debt = stock.get("divida_liquida_ebitda", 0.0) > 5.0
+        if is_rj or is_high_debt:
+            continue
+
         h = stock.get("historico", [])
         if not h or len(h) < 2:
             continue
