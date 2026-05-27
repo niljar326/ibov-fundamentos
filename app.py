@@ -1,911 +1,719 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from datetime import datetime
+import time
 
-import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  TrendingUp, 
-  Sparkles, 
-  TrendingDown, 
-  BadgeAlert, 
-  HelpCircle, 
-  Clock, 
-  Newspaper, 
-  Coins, 
-  ArrowUpRight, 
-  ExternalLink,
-  DollarSign,
-  Briefcase,
-  ChevronRight,
-  Info
-} from 'lucide-react';
+# Configuração da página do Streamlit
+st.set_page_config(
+    page_title="Ranking Ibovespa Inteligente 2025",
+    page_icon="🇧🇷",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-import { STOCK_DATABASE, MARKET_NEWS, LATEST_DIVIDENDS } from './data/stocks';
-import LockScreen from './components/LockScreen';
-import StockChart from './components/StockChart';
-import TradingViewWidget from './components/TradingViewWidget';
-
-type TabType = 'ranking' | 'magic' | 'graham' | 'eps' | 'asymmetry';
-
-export default function App() {
-  // Navigation & User settings
-  const [activeTab, setActiveTab] = useState<TabType>('ranking');
-  const [userName, setUserName] = useState(() => localStorage.getItem('b3_user_name') || '');
-  const [appLiberado, setAppLiberado] = useState(() => localStorage.getItem('b3_app_liberado') === 'true');
-  const [utcTime, setUtcTime] = useState(new Date());
-
-  // Dropdown states for interactive chart selects
-  const [selectedChartTicker, setSelectedChartTicker] = useState('PETR4');
-  const [selectedAsymmetryTicker, setSelectedAsymmetryTicker] = useState('BBSE3');
-
-  // Real-time UTC clock ticker
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setUtcTime(new Date());
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Sync persists
-  useEffect(() => {
-    localStorage.setItem('b3_user_name', userName);
-  }, [userName]);
-
-  const handleUnlock = () => {
-    setAppLiberado(true);
-    localStorage.setItem('b3_app_liberado', 'true');
-  };
-
-  const handleLockReset = () => {
-    setAppLiberado(false);
-    localStorage.setItem('b3_app_liberado', 'false');
-  };
-
-  // 1. DATA ENGINES - FUNDAMENTALIST FILTER
-  const dfBest = STOCK_DATABASE.filter(stock => 
-    stock.roe > 0.05 &&
-    stock.pl > 0 && stock.pl < 15 &&
-    stock.evebit > 0 && stock.evebit < 10 &&
-    stock.dy > 0.04 &&
-    stock.mrgliq > 0.05 &&
-    stock.liq2m > 200000
-  ).sort((a, b) => {
-    if (a.pl !== b.pl) return a.pl - b.pl; // lower P/L first
-    return b.mrgliq - a.mrgliq;            // higher Margem Líquida secondary
-  });
-
-  // Risk stocks list (Alavancagem ou RJ)
-  const listRJ = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4'];
-  const dfWarning = STOCK_DATABASE.filter(stock => 
-    stock.divbpatr > 3.0 || listRJ.includes(stock.papel)
-  ).sort((a, b) => b.divbpatr - a.divbpatr);
-
-  // 2. DATA ENGINES - MAGIC FORMULA
-  // Rank universes by highest EY and highest ROIC
-  const candidatesMagic = STOCK_DATABASE.filter(stock => stock.liq2m > 100000 && stock.evebit > 0);
-  const eySorted = [...candidatesMagic].sort((a, b) => a.evebit - b.evebit); // EV/EBIT lower is better (which means EY 1/[EV/EBIT] is higher)
-  const roicSorted = [...candidatesMagic].sort((a, b) => b.roic - a.roic);   // ROIC higher is better
-
-  const dfMagic = candidatesMagic.map(stock => {
-    const rankEy = eySorted.findIndex(s => s.papel === stock.papel) + 1;
-    const rankRoic = roicSorted.findIndex(s => s.papel === stock.papel) + 1;
-    const scoreMagico = rankEy + rankRoic;
-    return {
-      ...stock,
-      rankEy,
-      rankRoic,
-      scoreMagico,
-      earningYield: 1 / stock.evebit
-    };
-  }).sort((a, b) => a.scoreMagico - b.scoreMagico).slice(0, 40);
-
-  // 3. DATA ENGINES - GRAHAM VALUATION
-  const dfGraham = STOCK_DATABASE.filter(stock => stock.pl > 0 && stock.pvp > 0 && stock.liq2m > 100000)
-    .map(stock => {
-      const valorIntrinseco = Math.sqrt(22.5 * stock.lpa * stock.vpa);
-      const ratio = valorIntrinseco / stock.cotacao;
-      return {
-        ...stock,
-        valorIntrinseco,
-        ratio,
-        status: ratio > 1.0 ? 'Barata' : 'Cara'
-      };
-    }).sort((a, b) => b.ratio - a.ratio);
-
-  // 4. DATA ENGINES - EPS DILUÍDO (> 1.0)
-  const dfEps = STOCK_DATABASE.filter(stock => stock.liq2m > 100000 && stock.epsTrimestral > 1.0)
-    .sort((a, b) => b.epsTrimestral - a.epsTrimestral);
-
-  // 5. DATA ENGINES - ASYMMETRY (Lucro acima do preço)
-  const asymmetryStocks = STOCK_DATABASE.filter(stock => {
-    const h = stock.historico;
-    if (!h || h.length < 2) return false;
-    const prices = h.map(x => x.cotacao);
-    const profits = h.map(x => x.lucro);
-
-    const pMin = Math.min(...prices);
-    const pMax = Math.max(...prices);
-    const lMin = Math.min(...profits);
-    const lMax = Math.max(...profits);
-
-    if (pMax > pMin && lMax > lMin) {
-      const currentP = prices[prices.length - 1];
-      const currentL = profits[profits.length - 1];
-      const pPos = (currentP - pMin) / (pMax - pMin);
-      const lPos = (currentL - lMin) / (lMax - lMin);
-      return lPos > pPos; // relative progress in profit ends above relative progress in stock price
+# Estilização CSS customizada para aproximar do design ultra-polido
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
+    
+    html, body, [data-testid="stAppViewContainer"] {
+        font-family: 'Inter', sans-serif;
+        background-color: #f8fafc;
+        color: #1e293b;
     }
-    return false;
-  });
+    
+    /* Customização do Banner de AD */
+    .ad-banner {
+        background: linear-gradient(90deg, #1e3a8a 0%, #0f172a 100%);
+        color: white;
+        text-align: center;
+        padding: 10px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 12px;
+        margin-bottom: 24px;
+        position: relative;
+        overflow: hidden;
+    }
+    .ad-badge {
+        background-color: #fbbf24;
+        color: #0f172a;
+        font-weight: 800;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        margin-right: 8px;
+        display: inline-block;
+    }
 
-  const activeChartData = STOCK_DATABASE.find(s => s.papel === selectedChartTicker)?.historico || [];
-  const activeAsymmetryChartData = STOCK_DATABASE.find(s => s.papel === selectedAsymmetryTicker)?.historico || [];
+    /* Cartões personalizados */
+    .custom-card {
+        background-color: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    
+    /* Sidebar styling */
+    section[data-testid="stSidebar"] {
+        background-color: white !important;
+        border-right: 1px solid #e2e8f0 !important;
+    }
+    
+    .sidebar-logo {
+        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+        color: white;
+        font-size: 24px;
+        font-weight: 800;
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+        margin-bottom: 12px;
+    }
 
-  // Current month reference
-  const refMonth = utcTime.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    /* Botão de WhatsApp afiliado */
+    .whatsapp-btn {
+        display: block;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white !important;
+        padding: 16px;
+        border-radius: 18px;
+        text-decoration: none;
+        font-weight: 600;
+        margin-bottom: 16px;
+        transition: all 0.2s ease-in-out;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
+    }
+    .whatsapp-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(16, 185, 129, 0.2);
+    }
 
-  // Formatting helper
-  const fmtPct = (val: number) => `${(val * 100).toFixed(1)}%`;
-  const fmtCurrency = (val: number) => `R$ ${val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    /* Tabs customizadas streamlit radio style */
+    div.row-widget.stRadio > div {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    div.row-widget.stRadio > div > label {
+        background-color: white !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 12px !important;
+        padding: 10px 16px !important;
+        color: #475569 !important;
+        font-weight: 600 !important;
+        font-size: 13px !important;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+    div.row-widget.stRadio > div > label:hover {
+        background-color: #f8fafc !important;
+    }
+    
+    /* Ocultar rádio padrão do streamlit mas customizar selection */
+    div[data-testid="stMarkdownContainer"] p {
+        margin-bottom: 0px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col transition-all selection:bg-blue-100 selection:text-blue-900" id="b3-dashboard-root">
-      
-      {/* Top Banner Advertisement simulate */}
-      <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white text-center py-2.5 px-4 text-xs font-medium flex items-center justify-center gap-2 relative overflow-hidden" id="sponsored-top-banner">
-        <span className="bg-amber-400 text-slate-900 font-bold px-1.5 py-0.5 rounded text-[10px] tracking-wider uppercase">AD</span>
-        <span className="truncate">Ganhe benefícios e apoie nossa comunidade acessando os parceiros abaixo ou na barra lateral!</span>
-        <div className="absolute top-0 right-0 bottom-0 left-0 bg-[radial-gradient(circle,rgba(255,255,255,0.15)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-40" />
-      </div>
+# --- BANCO DE DADOS FALLBACK (Simulando STOCK_DATABASE de forma idêntica à do React) ---
+STOCK_DATABASE = [
+    {
+        "papel": "PETR4", "empresa": "Petrobras", "cotacao": 38.50, "pl": 4.25, "pvp": 1.15, "evebit": 3.65,
+        "roe": 0.284, "roic": 0.245, "dy": 0.142, "mrgliq": 0.195, "liq2m": 1540000000, "divbpatr": 0.78,
+        "lpa": 9.05, "vpa": 33.47, "epsTrimestral": 2.38, "dataRef": "31/12/2024", "quedaLucro": "Estável", "situacao": "Saudável",
+        "historico": [
+            {"periodo": "2021", "receita": 452e9, "lucro": 106e9, "cotacao": 22.10},
+            {"periodo": "2022", "receita": 641e9, "lucro": 188e9, "cotacao": 24.50},
+            {"periodo": "2023", "receita": 511e9, "lucro": 124e9, "cotacao": 32.80},
+            {"periodo": "2024", "receita": 495e9, "lucro": 118e9, "cotacao": 36.20},
+            {"periodo": "Últimos 12m", "receita": 488e9, "lucro": 115e9, "cotacao": 38.50}
+        ]
+    },
+    {
+        "papel": "VALE3", "empresa": "Vale", "cotacao": 62.40, "pl": 6.80, "pvp": 1.45, "evebit": 4.90,
+        "roe": 0.213, "roic": 0.187, "dy": 0.088, "mrgliq": 0.224, "liq2m": 1250000000, "divbpatr": 0.52,
+        "lpa": 9.17, "vpa": 43.03, "epsTrimestral": 1.84, "dataRef": "31/12/2024", "quedaLucro": "Estável", "situacao": "Saudável",
+        "historico": [
+            {"periodo": "2021", "receita": 293e9, "lucro": 121e9, "cotacao": 77.20},
+            {"periodo": "2022", "receita": 225e9, "lucro": 95e9, "cotacao": 81.30},
+            {"periodo": "2023", "receita": 198e9, "lucro": 39e9, "cotacao": 68.40},
+            {"periodo": "2024", "receita": 205e9, "lucro": 42e9, "cotacao": 60.50},
+            {"periodo": "Últimos 12m", "receita": 211e9, "lucro": 45e9, "cotacao": 62.40}
+        ]
+    },
+    {
+        "papel": "BBAS3", "empresa": "Banco do Brasil", "cotacao": 27.80, "pl": 4.10, "pvp": 0.78, "evebit": 3.10,
+        "roe": 0.215, "roic": 0.198, "dy": 0.104, "mrgliq": 0.165, "liq2m": 480000000, "divbpatr": 0.12,
+        "lpa": 6.78, "vpa": 35.64, "epsTrimestral": 1.62, "dataRef": "31/12/2024", "quedaLucro": "Estável", "situacao": "Saudável",
+        "historico": [
+            {"periodo": "2021", "receita": 82e9, "lucro": 19.7e9, "cotacao": 15.60},
+            {"periodo": "2022", "receita": 104e9, "lucro": 31.01e9, "cotacao": 18.90},
+            {"periodo": "2023", "receita": 122e9, "lucro": 35.5e9, "cotacao": 25.40},
+            {"periodo": "2024", "receita": 133e9, "lucro": 38.2e9, "cotacao": 26.95},
+            {"periodo": "Últimos 12m", "receita": 138e9, "lucro": 40.1e9, "cotacao": 27.80}
+        ]
+    },
+    {
+        "papel": "BBSE3", "empresa": "BB Seguridade", "cotacao": 33.15, "pl": 8.10, "pvp": 5.40, "evebit": 6.20,
+        "roe": 0.655, "roic": 0.582, "dy": 0.096, "mrgliq": 0.442, "liq2m": 125000000, "divbpatr": 0.02,
+        "lpa": 4.09, "vpa": 6.14, "epsTrimestral": 1.05, "dataRef": "31/12/2024", "quedaLucro": "Estável", "situacao": "Saudável",
+        "historico": [
+            {"periodo": "2021", "receita": 12e9, "lucro": 3.9e9, "cotacao": 19.40},
+            {"periodo": "2022", "receita": 15e9, "lucro": 6.0e9, "cotacao": 25.10},
+            {"periodo": "2023", "receita": 18e9, "lucro": 7.7e9, "cotacao": 31.80},
+            {"periodo": "2024", "receita": 19e9, "lucro": 8.1e9, "cotacao": 32.20},
+            {"periodo": "Últimos 12m", "receita": 19.5e9, "lucro": 8.3e9, "cotacao": 33.15}
+        ]
+    },
+    {
+        "papel": "TAEE11", "empresa": "Taesa", "cotacao": 35.80, "pl": 9.80, "pvp": 1.72, "evebit": 8.10,
+        "roe": 0.176, "roic": 0.125, "dy": 0.098, "mrgliq": 0.354, "liq2m": 65000000, "divbpatr": 1.82,
+        "lpa": 3.65, "vpa": 20.81, "epsTrimestral": 0.92, "dataRef": "31/12/2024", "quedaLucro": "Estável", "situacao": "Saudável",
+        "historico": [
+            {"periodo": "2021", "receita": 3.2e9, "lucro": 2.2e9, "cotacao": 31.20},
+            {"periodo": "2022", "receita": 2.9e9, "lucro": 1.4e9, "cotacao": 34.50},
+            {"periodo": "2023", "receita": 3.4e9, "lucro": 1.3e9, "cotacao": 36.10},
+            {"periodo": "2024", "receita": 3.6e9, "lucro": 1.2e9, "cotacao": 35.20},
+            {"periodo": "Últimos 12m", "receita": 3.8e9, "lucro": 1.3e9, "cotacao": 35.80}
+        ]
+    },
+    {
+        "papel": "OIBR3", "empresa": "Oi S.A. (Rec Dev)", "cotacao": 0.85, "pl": -0.15, "pvp": -0.05, "evebit": -1.10,
+        "roe": -0.842, "roic": -0.321, "dy": 0.0, "mrgliq": -0.925, "liq2m": 12000000, "divbpatr": 4.52,
+        "lpa": -5.60, "vpa": -17.20, "epsTrimestral": -1.25, "dataRef": "31/12/2024", "quedaLucro": "Forte Queda", "situacao": "Recup. Judicial",
+        "historico": [
+            {"periodo": "2021", "receita": 17e9, "lucro": -8.4e9, "cotacao": 1.42},
+            {"periodo": "2022", "receita": 12e9, "lucro": -19.2e9, "cotacao": 0.95},
+            {"periodo": "2023", "receita": 9.5e9, "lucro": -5.4e9, "cotacao": 0.70},
+            {"periodo": "2024", "receita": 8.1e9, "lucro": -4.1e9, "cotacao": 0.82},
+            {"periodo": "Últimos 12m", "receita": 7.8e9, "lucro": -3.8e9, "cotacao": 0.85}
+        ]
+    }
+]
 
-      <div className="flex-1 w-full max-w-7xl mx-auto px-4 md:px-8 py-8 flex flex-col lg:flex-row gap-8">
+MARKET_NEWS = [
+    {"source": "InfoMoney", "title": "Ibovespa opera em alta impulsionado por commodities e expectativas fiscais", "link": "https://www.infomoney.com.br"},
+    {"source": "Money Times", "title": "Dividendo robusto: Melhores pagadoras da semana anunciam cronograma de repasse", "link": "https://www.moneytimes.com.br"},
+    {"source": "Valor", "title": "Análise Técnica: PETR4 rompe suporte histórico e mira R$ 41,00", "link": "https://valor.globo.com"}
+]
+
+LATEST_DIVIDENDS = [
+    {"ativo": "PETR4", "valor": 1.4253, "data": "2025-02-15"},
+    {"ativo": "BBAS3", "valor": 0.4521, "data": "2025-02-20"},
+    {"ativo": "TAEE11", "valor": 0.8523, "data": "2025-02-28"}
+]
+
+# Inicializando session_state
+if 'app_liberado' not in st.session_state:
+    st.session_state.app_liberado = True
+if 'user_name' not in st.session_state:
+    st.session_state.user_name = ""
+
+# --- ADVERTISMENT TOP BANNER ---
+st.markdown("""
+<div class="ad-banner">
+    <span class="ad-badge">AD</span>
+    Ganhe benefícios e apoie nossa comunidade acessando os patrocinadores na barra lateral ou nos links de membro!
+</div>
+""", unsafe_allow_html=True)
+
+# --- SIDEBAR STYLE ---
+with st.sidebar:
+    st.markdown('<div class="sidebar-logo">B3</div>', unsafe_allow_html=True)
+    st.subheader("Ranking Ibovespa")
+    st.caption("Versão Ultra-Polida 2025 (Python Streamlit)")
+    
+    st.markdown("---")
+    
+    # Identificação do usuário
+    st.markdown("##### **Identificação**")
+    user_name_input = st.text_input(
+        "Seu nome para relatórios:",
+        value=st.session_state.user_name,
+        placeholder="Ex: Nilton, Maria, Lucas..."
+    )
+    if user_name_input != st.session_state.user_name:
+        st.session_state.user_name = user_name_input
+        st.rerun()
         
-        {/* SIDEBAR ON LEFT */}
-        <aside className="w-full lg:w-72 shrink-0 flex flex-col gap-6" id="dashboard-sidebar">
-          
-          {/* Main Logo Card */}
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-3 relative overflow-hidden">
-            <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-sans font-bold text-xl shadow-lg shadow-blue-500/20">
-              B3
-            </div>
-            <div>
-              <h1 className="font-sans font-extrabold tracking-tight text-slate-900 text-lg leading-tight">
-                Ranking Ibovespa
-              </h1>
-              <p className="text-xs text-slate-400 font-mono mt-0.5">Versão Ultra-Polida 2025</p>
-            </div>
-            <div className="absolute top-4 right-4 text-slate-100 font-bold font-mono text-5xl pointer-events-none select-none">
-              BR
-            </div>
-          </div>
-
-          {/* User Welcome personalization */}
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-3">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Identificação</span>
-            <div className="flex flex-col gap-2">
-              <label htmlFor="sidebar-name-input" className="text-xs text-slate-500 font-medium">Seu nome para relatórios:</label>
-              <input
-                id="sidebar-name-input"
-                type="text"
-                autoComplete="off"
-                placeholder="Ex: Nilton, Maria, Lucas..."
-                value={userName}
-                onChange={(e) => setUserName(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all placeholder:text-slate-400 text-slate-800 bg-slate-50/50"
-              />
-            </div>
-            {userName && (
-              <p className="text-[11px] text-slate-500 italic">
-                Bem-vindo(a), <strong className="text-slate-800">{userName}</strong>!
-              </p>
-            )}
-          </div>
-
-          {/* Real-time Clock Widget */}
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-blue-500 shrink-0" />
-              <span className="text-xs font-semibold text-slate-700">Relatório B3 Online</span>
-            </div>
-            <span className="font-mono text-[11px] font-bold text-slate-500 tracking-wider">
-              {utcTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} BRT
-            </span>
-          </div>
-
-          {/* Giga+ Fibra WhatsApp Affiliate banner */}
-          <a
-            href="https://wa.me/552220410353?text=Use%20o%20codigo%20DVT329%20e%20ganhe%2020%25%20nas%20duas%20primeiras%20mensalidades"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group block bg-gradient-to-br from-emerald-500 to-green-600 rounded-3xl p-6 text-white shadow-md shadow-emerald-500/10 hover:shadow-lg transition-all relative overflow-hidden"
-            id="whatsapp-affiliate-banner"
-          >
-            {/* Ambient pattern */}
-            <div className="absolute inset-0 bg-[radial-gradient(circle,rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-50" />
-            
-            <div className="flex items-center gap-3 mb-4">
-              <div className="h-10 w-10 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-white shrink-0">
-                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                  <path d="M.012 24l1.635-5.97A11.91 11.91 0 0 1 0 12.008C0 5.4 5.4 0 12.004 0c6.602 0 11.984 5.4 11.984 12.008 0 6.603-5.382 12.004-11.984 12.004-2.102 0-4.14-.548-5.955-1.583L0 24zm6.59-4.814l.385.228a9.92 9.92 0 0 0 5.033 1.365c5.496 0 9.97-4.47 9.97-9.972 0-5.503-4.474-9.972-9.97-9.972-5.507 0-9.978 4.47-9.978 9.972 0 2.215.736 4.316 2.13 6.024l.25.309-1.258 4.605 4.71-1.232c-.1-.005.14.07-.272-.327zm10.741-6.19c-.312-.158-1.85-.913-2.136-1.018-.287-.105-.495-.158-.703.158-.207.315-.8.1-.976.315-.177.21-.355.237-.667.08-.312-.158-1.32-.487-2.514-1.55-.93-.83-1.558-1.855-1.74-2.17-.183-.316-.02-.487.137-.644.14-.141.312-.368.468-.553.156-.184.208-.316.312-.526.104-.21.052-.395-.026-.553-.078-.158-.703-1.697-.963-2.329-.253-.614-.51-.53-.703-.54l-.597-.013c-.208 0-.547.078-.833.394-.287.316-1.094 1.07-1.094 2.607 0 1.539 1.12 3.026 1.276 3.237.156.21 2.2 3.36 5.33 4.715 1.7.737 2.378.842 3.226.71.6-.092 1.85-.754 2.11-1.474.26-.719.26-1.334.182-1.465-.078-.131-.286-.21-.598-.368z"/>
-                </svg>
-              </div>
-              <div className="flex flex-col">
-                <span className="font-bold text-xs tracking-wide">Código: DVT329</span>
-                <span className="text-[10px] text-emerald-100">Giga+ Fibra Telecom</span>
-              </div>
-            </div>
-            
-            <h4 className="font-bold text-sm leading-tight mb-1">
-              Internet Estável com 20% OFF!
-            </h4>
-            <p className="text-[11px] text-emerald-55 leading-relaxed mb-4">
-              Assine as duas primeiras mensalidades de fibra de alta performance com desconto exclusivo. Clique para falar com o atendente direto.
-            </p>
-
-            <div className="bg-white/10 dark:bg-black/15 px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between hover:bg-white/20 transition-all font-sans">
-              <span>Resgatar Cupom no WhatsApp</span>
-              <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </div>
-          </a>
-
-          {/* Quick Stats Panel / About */}
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Universo de Cobertura</span>
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Ações Monitoradas:</span>
-                <strong className="text-slate-800">{STOCK_DATABASE.length} empresas</strong>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Liquidez diária base:</span>
-                <strong className="text-slate-800">&gt; R$ 100k</strong>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Métricas analíticas:</span>
-                <strong className="text-slate-800"> Graham & Greenblatt</strong>
-              </div>
-            </div>
-
-            {appLiberado && (
-              <div className="pt-2 border-t border-slate-100">
-                <button
-                  onClick={handleLockReset}
-                  className="w-full text-center py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-semibold transition-all"
-                  title="Bloquear o dashboard para testes de anúncios"
-                >
-                  🔒 Testar Bloqueio de Anúncio
-                </button>
-              </div>
-            )}
-          </div>
-
-        </aside>
-
-        {/* MAIN DASHBOARD BLOCK */}
-        <main className="flex-1 flex flex-col gap-8" id="dashboard-main-content">
-          
-          {/* Main Title & Month Selector */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-blue-600 animate-pulse" />
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">B3 Ibovespa Inteligente</span>
-              </div>
-              <h2 className="font-sans font-black tracking-tight text-slate-900 text-3xl mt-1 leading-tight">
-                Análise de Ações Baratas e Rentáveis
-              </h2>
-              {userName ? (
-                <p className="text-slate-500 text-sm mt-1">
-                  Relatório tático de investimentos customizado para <strong className="text-slate-800 font-semibold">{userName}</strong> • Referência de <strong>{refMonth}</strong>
-                </p>
-              ) : (
-                <p className="text-slate-500 text-sm mt-1">
-                  Relatório tático de investimentos • Referência de <strong className="text-slate-800 capitalize font-semibold">{refMonth}</strong>
-                </p>
-              )}
-            </div>
-
-            <div className="inline-flex self-start md:self-auto bg-blue-50 border border-blue-100 px-4 py-2 rounded-2xl items-center gap-2.5 shadow-sm">
-              <span className="text-lg">🇧🇷</span>
-              <div className="text-left font-sans">
-                <p className="text-[10px] uppercase tracking-wider font-bold text-blue-700 leading-none">Bolsa Paulista</p>
-                <p className="text-xs font-black text-blue-950 mt-0.5">Ibovespa em 2025</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Premium Tab Selection Navigation (Using stylings representing Streamlit radio tab mimicking buttons) */}
-          <div className="bg-white border border-slate-200/80 p-1.5 rounded-2xl flex flex-wrap gap-1 leading-none shadow-sm" id="premium-tab-bar">
-            {[
-              { id: 'ranking', label: '🏆 Ranking Fundamentalista', desc: 'Filtros Sérios' },
-              { id: 'magic', label: '✨ Fórmula Mágica', desc: 'Joel Greenblatt' },
-              { id: 'graham', label: '💎 Graham Valuation', desc: 'Preço Justo' },
-              { id: 'eps', label: '📈 EPS Diluído', desc: 'Lucro Trimestral' },
-              { id: 'asymmetry', label: '📉 Assimetria Lucro/Preço', desc: 'Robô de Sinais' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                id={`tab-trigger-button-${tab.id}`}
-                onClick={() => setActiveTab(tab.id as TabType)}
-                className={`flex-1 min-w-[140px] px-3 py-2.5 rounded-xl text-center transition-all flex flex-col items-center justify-center gap-0.5 text-xs font-bold leading-none ${
-                  activeTab === tab.id
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/15'
-                    : 'bg-white text-slate-600 hover:bg-slate-50 border border-transparent'
-                }`}
-              >
-                <span>{tab.label}</span>
-                <span className={`text-[9px] font-medium leading-none ${activeTab === tab.id ? 'text-blue-100' : 'text-slate-400'}`}>
-                  {tab.desc}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Tab content area mapped securely */}
-          <div className="min-h-[400px] flex flex-col gap-8" id="dashboard-tab-views">
-
-            {/* IF APP IS COMPLETELY LOCKED */}
-            {!appLiberado ? (
-              <LockScreen onUnlock={handleUnlock} />
-            ) : (
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeTab}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.25 }}
-                  className="flex flex-col gap-8"
-                >
-                  
-                  {/* TAB 1: RANKING FUNDAMENTALISTA */}
-                  {activeTab === 'ranking' && (
-                    <div className="flex flex-col gap-8" id="tab-view-ranking">
-                      
-                      {/* Introductory card */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-2">
-                        <div className="flex items-center gap-2 text-blue-600 font-bold text-xs uppercase font-mono">
-                          <TrendingUp className="w-4 h-4" />
-                          <span>Critérios Fundamentalistas Aplicados</span>
-                        </div>
-                        <h3 className="font-bold text-slate-800 text-lg">Ranking de Oportunidades Saudáveis</h3>
-                        <p className="text-slate-500 text-sm leading-relaxed">
-                          Filtramos o mercado brasileiro aplicando restrições de alto nível: <strong>ROE &gt; 5%</strong>, <strong>0 &lt; P/L &lt; 15</strong>, <strong>0 &lt; EV/EBIT &lt; 10</strong>, dividendos com <strong>Dividend Yield &gt; 4%</strong>, margem líquida positiva superior a <strong>5%</strong> e liquidez diária expressiva acima de <strong>R$ 200 mil</strong>.
-                        </p>
-                      </div>
-
-                      {/* Best Stocks Table */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl shadow-sm overflow-hidden flex flex-col" id="best-stocks-table-card">
-                        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                          <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                            🏆 Melhores Ações Fundamentalistas da B3 ({dfBest.length})
-                          </h4>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase">Filtros Ativos</span>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-400 uppercase tracking-wider font-mono font-bold text-[10px]">
-                                <th className="px-6 py-3">Ativo</th>
-                                <th className="px-6 py-3">Nome Comercial</th>
-                                <th className="px-6 py-3 text-right">Preço Atual</th>
-                                <th className="px-6 py-3 text-right">0 &lt; P/L &lt; 15</th>
-                                <th className="px-6 py-3 text-right">EV/EBIT</th>
-                                <th className="px-6 py-3 text-right">ROE</th>
-                                <th className="px-6 py-3 text-right">Div. Yield (DY)</th>
-                                <th className="px-6 py-3 text-right">Margem Líq (%)</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {dfBest.map((stock, i) => (
-                                <tr key={stock.papel} className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors font-medium text-slate-700">
-                                  <td className="px-6 py-3.5 font-bold text-slate-950 font-mono text-xs">{stock.papel}</td>
-                                  <td className="px-6 py-3.5 text-slate-400 font-sans">{stock.empresa}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-slate-900 font-semibold">{fmtCurrency(stock.cotacao)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-blue-600 font-bold bg-blue-50/30">{stock.pl.toFixed(2)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-amber-700">{stock.evebit.toFixed(2)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-slate-900">{fmtPct(stock.roe)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-emerald-600 font-semibold">{fmtPct(stock.dy)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-slate-900">{fmtPct(stock.mrgliq)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      {/* Risks alert list */}
-                      <div className="bg-white border border-red-200/60 rounded-3xl shadow-sm overflow-hidden flex flex-col" id="warning-stocks-table-card">
-                        <div className="px-6 py-5 border-b border-red-100 bg-red-50/30 flex items-center justify-between">
-                          <h4 className="font-bold text-red-900 text-sm flex items-center gap-2">
-                            <BadgeAlert className="w-4 h-4 text-red-600" />
-                            ⚠️ Empresas em Situação de Risco ou Alta Alavancagem ({dfWarning.length})
-                          </h4>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-800 uppercase">Atenção</span>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-400 uppercase tracking-wider font-mono font-bold text-[10px]">
-                                <th className="px-6 py-3">Ativo</th>
-                                <th className="px-6 py-3">Nome Comercial</th>
-                                <th className="px-6 py-3 text-right">Cotação</th>
-                                <th className="px-6 py-3 text-right">Alavancagem (Div/Patr)</th>
-                                <th className="px-6 py-3 text-right">Var. Resultados</th>
-                                <th className="px-6 py-3">Situação Observada</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {dfWarning.map((stock) => (
-                                <tr key={stock.papel} className="border-b border-slate-100 hover:bg-red-50/10 transition-colors font-medium text-slate-700">
-                                  <td className="px-6 py-3.5 font-bold text-slate-950 font-mono">{stock.papel}</td>
-                                  <td className="px-6 py-3.5 text-slate-400">{stock.empresa}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono">{fmtCurrency(stock.cotacao)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-red-600 font-bold">{stock.divbpatr.toFixed(2)}</td>
-                                  <td className="px-6 py-3.5 text-right font-mono text-red-500 font-medium">{stock.quedaLucro}</td>
-                                  <td className="px-6 py-3.5">
-                                    <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
-                                      stock.situacao === 'Recup. Judicial' ? 'bg-red-100 text-red-800 border border-red-200' : 'bg-amber-100 text-amber-800 border border-amber-200'
-                                    }`}>
-                                      {stock.situacao}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      {/* interactive select and chart */}
-                      <div className="flex flex-col gap-4">
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                          <div>
-                            <h3 className="font-bold text-slate-800 text-base">📈 Gráfico Cotação vs Lucro/Receita</h3>
-                            <p className="text-xs text-slate-400">Selecione qualquer ativo monitorado para renderizar o gráfico histórico</p>
-                          </div>
-                          
-                          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-2xl border border-slate-200 shadow-sm w-full sm:w-auto">
-                            <span className="text-xs font-bold text-slate-400 shrink-0 uppercase tracking-wider font-mono">Papel:</span>
-                            <select
-                              id="historical-chart-select"
-                              value={selectedChartTicker}
-                              onChange={(e) => setSelectedChartTicker(e.target.value)}
-                              className="w-full bg-transparent font-mono font-bold text-slate-800 text-xs focus:outline-none outline-none border-none py-1 cursor-pointer"
-                            >
-                              {STOCK_DATABASE.map(s => (
-                                <option key={s.papel} value={s.papel}>
-                                  {s.papel} - {s.empresa}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <StockChart data={activeChartData} ticker={selectedChartTicker} />
-                      </div>
-
-                      {/* News and Dividends Grid bottom */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-4">
-                        
-                        {/* News Frame */}
-                        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
-                          <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                            <Newspaper className="w-4 h-4 text-blue-500" />
-                            📰 Notícias Recentes do Mercado Financeiro
-                          </h4>
-                          <div className="flex flex-col gap-3">
-                            {MARKET_NEWS.map((news, i) => (
-                              <a
-                                key={i}
-                                href={news.link}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="group flex flex-col gap-1 p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:bg-blue-50/10 transition-all"
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-bold font-mono text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded uppercase">
-                                    {news.source}
-                                  </span>
-                                  <ExternalLink className="w-3 h-3 text-slate-300 group-hover:text-blue-500 transition-colors" />
-                                </div>
-                                <h5 className="font-bold text-slate-800 text-xs leading-snug group-hover:text-blue-900 transition-colors">
-                                  {news.title}
-                                </h5>
-                              </a>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Recent Dividends */}
-                        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
-                          <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                            <Coins className="w-4 h-4 text-emerald-500" />
-                            💰 Últimos Dividendos Anunciados (B3)
-                          </h4>
-                          <div className="flex flex-col gap-3">
-                            {LATEST_DIVIDENDS.map((div, i) => (
-                              <div
-                                key={i}
-                                className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 bg-slate-50/30"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <div className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600 font-mono font-bold text-xs flex items-center justify-center">
-                                    {div.ativo}
-                                  </div>
-                                  <div className="flex flex-col">
-                                    <span className="font-bold text-slate-800 text-xs">Ação Preferencial/Ordinária</span>
-                                    <span className="text-[10px] text-slate-400">Data ex: {new Date(div.data).toLocaleDateString('pt-BR')}</span>
-                                  </div>
-                                </div>
-                                <span className="font-mono text-emerald-600 font-black text-xs">
-                                  R$ {div.valor.toFixed(4)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* TAB 2: FÓRMULA MÁGICA */}
-                  {activeTab === 'magic' && (
-                    <div className="flex flex-col gap-8" id="tab-view-magic">
-                      
-                      {/* Explainer */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-4">
-                        <div className="flex items-center gap-2 text-indigo-600 font-bold text-xs uppercase font-mono">
-                          <Sparkles className="w-4 h-4" />
-                          <span>Joel Greenblatt Magic Formula</span>
-                        </div>
-                        <h3 className="font-bold text-slate-800 text-lg">Metodologia Tática: Fórmula Mágica</h3>
-                        <p className="text-slate-500 text-sm leading-relaxed">
-                          Criada por Joel Greenblatt, esta metodologia rankeia ações com liquidez significativa e foca em encontrar empresas baratas com alta qualidade de retorno.
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-2">
-                          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl flex flex-col gap-1">
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase">1. Filtro base</span>
-                            <span className="text-xs font-bold text-slate-800">Liquidez diária &gt; R$ 100k e EV/EBIT positivo</span>
-                          </div>
-                          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl flex flex-col gap-1">
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase">2. Rank EY</span>
-                            <span className="text-xs font-bold text-slate-800">Earning Yield (EBIT / Valor da Empresa) - Maior para Menor</span>
-                          </div>
-                          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl flex flex-col gap-1">
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase">3. Rank ROIC</span>
-                            <span className="text-xs font-bold text-slate-800">Retorno sobre capital investido - Maior para Menor</span>
-                          </div>
-                          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl flex flex-col gap-1">
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase">4. Score Mágico</span>
-                            <span className="text-xs font-bold text-slate-800">Rank EY + Rank ROIC. Menor pontuação lidera o topo!</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Magic Table */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl shadow-sm overflow-hidden flex flex-col" id="magic-table-card">
-                        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                          <h4 className="font-bold text-slate-900 text-sm">
-                            ✨ Lista Top 40 Fórmula Mágica Ibovespa
-                          </h4>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 uppercase">Classificado por Score Mágico</span>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-400 uppercase tracking-wider font-mono font-bold text-[10px]">
-                                <th className="px-6 py-3">Ativo</th>
-                                <th className="px-6 py-3 text-right">Preço</th>
-                                <th className="px-6 py-3 text-right">Score Mágico (DY + ROIC)</th>
-                                <th className="px-6 py-3 text-right">Rank EY</th>
-                                <th className="px-6 py-3 text-right">Rank ROIC</th>
-                                <th className="px-6 py-3 text-right">Earning Yield (1 / EV/EBIT)</th>
-                                <th className="px-6 py-3 text-right">Ev/Ebit</th>
-                                <th className="px-6 py-3 text-right">ROIC (%)</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {dfMagic.map((stock, i) => {
-                                // Background highlight gradient
-                                let scoreColor = 'bg-slate-50 text-slate-800';
-                                if (stock.scoreMagico < 10) scoreColor = 'bg-emerald-50 text-emerald-800 border-l-4 border-emerald-500';
-                                else if (stock.scoreMagico < 25) scoreColor = 'bg-blue-50 text-blue-800';
-                                else if (stock.scoreMagico >= 35) scoreColor = 'bg-red-50 text-red-800';
-
-                                return (
-                                  <tr key={stock.papel} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors font-medium text-slate-700">
-                                    <td className="px-6 py-3.5 font-bold text-slate-900 font-mono flex items-center gap-1.5">
-                                      <span className="text-slate-300 font-mono text-[10px] w-4">{i + 1}</span>
-                                      {stock.papel}
-                                    </td>
-                                    <td className="px-6 py-3.5 text-right font-mono">{fmtCurrency(stock.cotacao)}</td>
-                                    <td className={`px-6 py-3.5 text-right font-mono font-black ${scoreColor}`}>
-                                      {stock.scoreMagico} pts
-                                    </td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-slate-500">{stock.rankEy}º</td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-slate-500">{stock.rankRoic}º</td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-indigo-600 font-semibold">{fmtPct(stock.earningYield)}</td>
-                                    <td className="px-6 py-3.5 text-right font-mono">{stock.evebit.toFixed(2)}</td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-slate-900">{fmtPct(stock.roic)}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* TAB 3: GRAHAM */}
-                  {activeTab === 'graham' && (
-                    <div className="flex flex-col gap-8" id="tab-view-graham">
-                      
-                      {/* Description */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-3">
-                        <div className="flex items-center gap-2 text-amber-600 font-bold text-xs uppercase font-mono">
-                          <DollarSign className="w-4 h-4" />
-                          <span>Benjamin Graham Valuation Model</span>
-                        </div>
-                        <h3 className="font-bold text-slate-800 text-lg">Modelo Graham Clássico de Preço Justo</h3>
-                        <p className="text-slate-500 text-sm leading-relaxed">
-                          A famosa equação de Graham de Valor Intrínseco é calculada como: <code className="bg-slate-100 px-2 py-0.5 rounded font-mono font-bold text-slate-800 text-xs">V.I = Raiz(22.5 * LPA * VPA)</code>.
-                        </p>
-                        <ul className="text-xs text-slate-500 list-disc pl-5 mt-1 leading-relaxed flex flex-col gap-1">
-                          <li><strong>LPA (Lucro por ação):</strong> Quanto lucro a empresa gerou para cada ação emitida.</li>
-                          <li><strong>VPA (Valor Patrimonial por ação):</strong> Qual o valor contábil líquido associado àquela ação.</li>
-                          <li><strong>Upside/Downside:</strong> Se for superior a 1.0, o preço justo está acima da cotação, indicando margem de segurança física para compras <strong>(Barata)</strong>.</li>
-                        </ul>
-                      </div>
-
-                      {/* Graham Table list */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl shadow-sm overflow-hidden flex flex-col" id="graham-table-card">
-                        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                          <h4 className="font-bold text-slate-900 text-sm">
-                            💎 Avaliação de Margem de Segurança Graham
-                          </h4>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 uppercase">Ordenados por Maior Margem</span>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="bg-slate-50/70 border-b border-slate-200 text-slate-400 uppercase tracking-wider font-mono font-bold text-[10px]">
-                                <th className="px-6 py-3">Ativo</th>
-                                <th className="px-6 py-3 text-right">Preço Atual</th>
-                                <th className="px-6 py-3 text-right">Preço Justo (Graham)</th>
-                                <th className="px-6 py-3 text-right">Upside Margem (V.I / Preço)</th>
-                                <th className="px-6 py-3">Status</th>
-                                <th className="px-6 py-3 text-right">LPA</th>
-                                <th className="px-6 py-3 text-right">VPA</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {dfGraham.map((stock) => {
-                                const isBarata = stock.status === 'Barata';
-                                return (
-                                  <tr key={stock.papel} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors font-medium text-slate-700">
-                                    <td className="px-6 py-3.5 font-bold text-slate-950 font-mono">{stock.papel}</td>
-                                    <td className="px-6 py-3.5 text-right font-mono">{fmtCurrency(stock.cotacao)}</td>
-                                    <td className="px-6 py-3.5 text-right font-mono font-bold text-slate-900">{fmtCurrency(stock.valorIntrinseco)}</td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-purple-700 font-bold bg-purple-50/25">
-                                      {stock.ratio.toFixed(2)}x
-                                    </td>
-                                    <td className="px-6 py-3.5">
-                                      <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
-                                        isBarata ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-                                      }`}>
-                                        {isBarata ? '✓ Barata (Desconto)' : 'Valor Esticado'}
-                                      </span>
-                                    </td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-slate-500">{fmtCurrency(stock.lpa)}</td>
-                                    <td className="px-6 py-3.5 text-right font-mono text-slate-500">{fmtCurrency(stock.vpa)}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* TAB 4: EPS DILUÍDO */}
-                  {activeTab === 'eps' && (
-                    <div className="flex flex-col gap-8" id="tab-view-eps">
-                      
-                      {/* Explainer Expander */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-3">
-                        <div className="flex items-center gap-1.5 text-blue-600">
-                          <Info className="w-4 h-4" />
-                          <h4 className="font-bold text-slate-800 text-sm">O que é EPS Diluído (LPA Trimestral)?</h4>
-                        </div>
-                        <p className="text-slate-600 text-xs leading-relaxed">
-                          É uma métrica financeira que mede o valor do lucro líquido de uma empresa atribuído a cada ação corporativa em circulação, deduzida toda a diluição possível decorrente de concessões de bônus, conversões de debêntures ou opções de novas ações. Valores elevados no trimestre mais recente indicam forte capacidade de geração de lucro.
-                        </p>
-                      </div>
-
-                      {/* Side by side stats and TV widget */}
-                      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
-                        
-                        {/* Highlights list on side */}
-                        <div className="lg:col-span-2 bg-white border border-slate-200/80 rounded-3xl shadow-sm overflow-hidden flex flex-col">
-                          <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                            <h4 className="font-bold text-slate-900 text-xs">
-                              📈 EPS Líquido Trimestral &gt; R$ 1,00
-                            </h4>
-                          </div>
-                          <div className="p-4 flex-1 flex flex-col gap-3">
-                            {dfEps.map((stock) => (
-                              <div
-                                key={stock.papel}
-                                className="flex items-center justify-between p-3 rounded-2xl border border-slate-100 hover:border-slate-200 hover:bg-slate-50 bg-slate-50/10 transition-all font-sans"
-                              >
-                                <div className="flex items-center gap-2.5">
-                                  <div className="h-8 w-8 rounded-xl bg-blue-50 text-blue-600 font-mono font-bold text-xs flex items-center justify-center">
-                                    {stock.papel}
-                                  </div>
-                                  <div>
-                                    <h5 className="font-bold text-slate-800 text-xs">{stock.empresa}</h5>
-                                    <span className="text-[10px] text-slate-400 font-mono">Ref: {stock.dataRef}</span>
-                                  </div>
-                                </div>
-                                <div className="text-right">
-                                  <span className="font-mono text-emerald-600 font-bold text-xs block">
-                                    {fmtCurrency(stock.epsTrimestral)}
-                                  </span>
-                                  <span className="text-[9px] text-slate-400">Preço: {fmtCurrency(stock.cotacao)}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Chart embed space */}
-                        <div className="lg:col-span-3 flex flex-col gap-4">
-                          <TradingViewWidget symbol="PETR4" />
-                        </div>
-
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* TAB 5: ASSIMETRIA */}
-                  {activeTab === 'asymmetry' && (
-                    <div className="flex flex-col gap-8" id="tab-view-asymmetry">
-                      
-                      {/* Explainer */}
-                      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col gap-2">
-                        <div className="flex items-center gap-2 text-green-600 font-bold text-xs uppercase font-mono">
-                          <TrendingUp className="w-4 h-4" />
-                          <span>Filtro de Assimetria Positiva</span>
-                        </div>
-                        <h3 className="font-bold text-slate-800 text-lg">📈 Assimetria Visual: Lucros acima do Preço</h3>
-                        <p className="text-slate-500 text-sm leading-relaxed">
-                          Este robô computacional varre as empresas mais líquidas em busca de um padrão assimétrico de ouro: <strong>empresas onde a direção dos lucros líquidos subiu com vigor acumulado, porém a cotação do papel na bolsa permaneceu atrasada ou em tendência oposta</strong>.
-                        </p>
-                      </div>
-
-                      {/* Asymmetry select and render */}
-                      <div className="flex flex-col gap-4">
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                          <div>
-                            <h4 className="font-bold text-slate-800 text-base">Selecione Ativo com Assimetria Detectada:</h4>
-                            <p className="text-xs text-slate-400">Encontradas {asymmetryStocks.length} ações qualificadas no último lote de cálculos.</p>
-                          </div>
-
-                          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-2xl border border-slate-200 shadow-sm w-full sm:w-auto">
-                            <span className="text-xs font-bold text-slate-400 shrink-0 uppercase tracking-wider font-mono">Ativo Seguro:</span>
-                            <select
-                              id="asymmetry-chart-select"
-                              value={selectedAsymmetryTicker}
-                              onChange={(e) => setSelectedAsymmetryTicker(e.target.value)}
-                              className="w-full bg-transparent font-mono font-bold text-slate-800 text-xs focus:outline-none outline-none border-none py-1 cursor-pointer"
-                            >
-                              {asymmetryStocks.map(s => (
-                                <option key={s.papel} value={s.papel}>
-                                  {s.papel} - {s.empresa}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Historical Graph */}
-                        <StockChart data={activeAsymmetryChartData} ticker={selectedAsymmetryTicker} />
-
-                        <div className="bg-emerald-50 border border-emerald-150 p-4 rounded-3xl flex items-center gap-3">
-                          <span className="text-lg">✅</span>
-                          <span className="text-xs text-emerald-800 font-sans leading-relaxed">
-                            <strong>Sinal Confirmado:</strong> A linha pontilhada verde (Lucro Líquido nos últimos 12m) termina visualmente acima da linha azul contínua (Cotação de Fechamento do ponto) garantindo uma grande assimetria positiva de segurança!
-                          </span>
-                        </div>
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* Foot ads affiliate simulated footer exactly like the streamlit code */}
-                  <div className="mt-8 pt-8 border-t border-slate-200">
-                    <h4 className="font-bold text-slate-600 text-xs uppercase tracking-wider text-center mb-6">Nossos Membros Patrocinadores Oficiais</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
-                      
-                      {/* Affiliate 1 */}
-                      <a
-                        href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I&n=Jader"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="bg-white border border-slate-200/85 hover:border-amber-300 p-5 rounded-3xl flex flex-col justify-between gap-4 hover:shadow-md transition-all group"
-                      >
-                        <div className="flex flex-col gap-1.5 leading-snug">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">✈️</span>
-                            <h4 className="font-bold text-sm text-slate-800 group-hover:text-amber-700 transition-colors">Nomad: Conta em Dólar Gratuita</h4>
-                          </div>
-                          <p className="text-xs text-slate-500 leading-normal">
-                            Abra sua conta bancária e de investimentos global nos EUA sem taxas mensais de manutenção. Use o convênio e garanta taxa cambial zero na primeira conversão de saldo!
-                          </p>
-                        </div>
-                        <div className="text-xs font-semibold text-amber-700 bg-amber-50 rounded-xl px-4 py-2 text-center group-hover:bg-amber-100 transition-all font-mono">
-                          Abrir Conta Internacional Nomad →
-                        </div>
-                      </a>
-
-                      {/* Affiliate 2 */}
-                      <a
-                        href="https://mpago.li/1VydVhw"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="bg-white border border-slate-200/85 hover:border-sky-300 p-5 rounded-3xl flex flex-col justify-between gap-4 hover:shadow-md transition-all group"
-                      >
-                        <div className="flex flex-col gap-1.5 leading-snug">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">🤝</span>
-                            <h4 className="font-bold text-sm text-slate-800 group-hover:text-blue-700 transition-colors">Mercado Pago: R$ 30,00 Grátis de Desconto</h4>
-                          </div>
-                          <p className="text-xs text-slate-500 leading-normal">
-                            Crie sua conta digital líder em rendimentos e maquininhas Point no Mercado Pago para receber pagamentos e conquiste um bônus de boas-vindas especial de trinta reais!
-                          </p>
-                        </div>
-                        <div className="text-xs font-semibold text-blue-700 bg-sky-50 rounded-xl px-4 py-2 text-center group-hover:bg-sky-100 transition-all font-mono font-bold">
-                          Resgatar Bônus Mercado Pago R$ 30 →
-                        </div>
-                      </a>
-
-                    </div>
-                  </div>
-
-                </motion.div>
-              </AnimatePresence>
-            )}
-
-          </div>
-
-        </main>
-      </div>
-
-      {/* Main Footer under entire frame */}
-      <footer className="w-full bg-slate-900 text-slate-400 py-10 border-t border-slate-800 text-xs">
-        <div className="max-w-7xl mx-auto px-6 md:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex flex-col gap-1 text-center md:text-left">
-            <h5 className="text-slate-200 font-bold font-sans">Ibovespa Fundamentalista © 2026</h5>
-            <p className="text-slate-500">Desenvolvido com maestria em React, TypeScript e Tailwind CSS para emulação perfeita do app.py.</p>
-          </div>
-          <div className="flex items-center gap-6">
-            <span className="hover:text-white transition-colors cursor-pointer">Termos de Uso</span>
-            <span className="hover:text-white transition-colors cursor-pointer">Políticas Gerais</span>
-            <span className="hover:text-slate-300 cursor-default bg-slate-800 px-2.5 py-1 rounded text-[10px] font-mono">B3 IB_V_2025</span>
-          </div>
-        </div>
-      </footer>
-
+    if st.session_state.user_name:
+        st.markdown(f"<p style='font-size:12px; color:#475569; font-style:italic;'>Bem-vindo(a), <b>{st.session_state.user_name}</b>!</p>", unsafe_allow_html=True)
+        
+    st.markdown("---")
+    
+    # Real-time report check
+    time_now = datetime.now().strftime("%H:%M:%S")
+    st.markdown(f"""
+    <div style="background-color:#f1f5f9; padding: 12px; border-radius:12px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:600; color:#334155;">Relatório B3 Online</span>
+        <span style="font-family:'JetBrains Mono', monospace; font-weight:700; color:#2563eb;">{time_now} BRT</span>
     </div>
-  );
-}
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Giga+ Fibra WhatsApp Banner
+    st.markdown("""
+    <a href="https://wa.me/552220410353?text=Use%20o%20codigo%20DVT329%20e%20ganhe%2020%25%20nas%20duas%20primeiras%20mensalidades" target="_blank" class="whatsapp-btn">
+        <div style="font-size: 11px; text-transform: uppercase; font-weight: 800; opacity: 0.9; margin-bottom: 4px;">Código: DVT329</div>
+        <div style="font-size: 15px; font-weight: 700; line-height: 1.2; margin-bottom: 8px;">Internet Estável com 20% OFF!</div>
+        <p style="font-size: 11px; font-weight: normal; margin-bottom: 12px; opacity: 0.85; line-height: 1.4;">
+            Assine as duas primeiras mensalidades de fibra de alta performance com desconto exclusivo Giga+ Fibra.
+        </p>
+        <div style="background-color:rgba(255,255,255,0.18); text-align:center; padding:8px 12px; border-radius:8px; font-size:11px;">
+            Resgatar Cupom no WhatsApp →
+        </div>
+    </a>
+    """, unsafe_allow_html=True)
+    
+    # Quick Stats Panel
+    st.markdown(f"""
+    <div style="background-color:white; border: 1px solid #e2e8f0; padding:16px; border-radius:16px;">
+        <p style="font-size:10px; font-weight:bold; color:#94a3b8; text-transform:uppercase; margin-bottom:8px; letter-spacing:0.5px;">Universo de Cobertura</p>
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:6px;">
+            <span style="color:#64748b;">Ações Monitoradas:</span>
+            <strong style="color:#1e293b;">{len(STOCK_DATABASE)} empresas</strong>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:6px;">
+            <span style="color:#64748b;">Liquidez diária base:</span>
+            <strong style="color:#1e293b;">&gt; R$ 100k</strong>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:12px;">
+            <span style="color:#64748b;">Métricas analíticas:</span>
+            <strong style="color:#1e293b;">Graham & Greenblatt</strong>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- CABEÇALHO DO DASHBOARD ---
+col_title, col_badge = st.columns([4, 1])
+with col_title:
+    st.markdown("""
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+        <span style="height:8px; width:8px; background-color:#2563eb; border-radius:50%; display:inline-block; animation:pulse 1s Infinite;"></span>
+        <span style="font-size:11px; font-weight:bold; color:#64748b; text-transform:uppercase; font-family:'JetBrains Mono', monospace; letter-spacing:1px;">B3 Ibovespa Inteligente</span>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("# **Análise de Ações Baratas e Rentáveis**")
+    
+    ref_month = datetime.now().strftime("%B de %Y").capitalize()
+    if st.session_state.user_name:
+        st.markdown(f"Relatório tático de investimentos customizado para **{st.session_state.user_name}** • Referência de {ref_month}")
+    else:
+        st.markdown(f"Relatório tático de investimentos • Referência de {ref_month}")
+
+with col_badge:
+    st.markdown("""
+    <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 12px; border-radius: 16px; text-align: center;">
+        <span style="font-size: 20px;">🇧🇷</span>
+        <div style="font-size: 9px; font-weight: bold; color: #1d4ed8; text-transform: uppercase; margin-top:2px;">Bolsa Paulista</div>
+        <div style="font-size: 11px; font-weight: 800; color: #172554;">Ibovespa em 2025</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- MENU DE TABS DE ALTO NÍVEL ---
+tabs = [
+    "🏆 Ranking Fundamentalista",
+    "✨ Fórmula Mágica",
+    "💎 Graham Valuation",
+    "📈 EPS Diluído",
+    "📉 Assimetria Lucro/Preço"
+]
+active_tab = st.radio("Selecione a Visualização:", tabs, label_visibility="collapsed")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- FUNÇÕES DE PROCESSAMENTO ---
+df_original = pd.DataFrame(STOCK_DATABASE)
+
+# Formatting helpers
+def fmt_pct(val):
+    return f"{val * 100:.1f}%"
+
+def fmt_currency(val):
+    return f"R$ {val:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+
+# --- CONTEÚDO DOS TABS ---
+
+if active_tab == "🏆 Ranking Fundamentalista":
+    st.markdown("""
+    <div class="custom-card">
+        <h4 style="color:#2563eb; font-weight:700; margin:0 0 4px 0; font-size:14px; font-family:'JetBrains Mono', monospace;">🏆 SINAIS FUNDAMENTALISTAS SAUDÁVEIS</h4>
+        <h3 style="margin:0 0 8px 0; font-weight:800; font-size:18px;">Ranking de Oportunidades Saudáveis</h3>
+        <p style="color:#475569; font-size:13px; line-height:1.5; margin:0;">
+            Filtramos o mercado brasileiro aplicando restrições de alto nível: <strong>ROE &gt; 5%</strong>, <strong>0 &lt; P/L &lt; 15</strong>, 
+            <strong>0 &lt; EV/EBIT &lt; 10</strong>, dividendos com <strong>Dividend Yield &gt; 4%</strong>, margem líquida positiva superior a 
+            <strong>5%</strong> e liquidez diária expressiva acima de <strong>R$ 200 mil</strong>.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Filtragem dos melhores fundamentalistas
+    df_best = df_original[
+        (df_original['roe'] > 0.05) &
+        (df_original['pl'] > 0) & (df_original['pl'] < 15) &
+        (df_original['evebit'] > 0) & (df_original['evebit'] < 10) &
+        (df_original['dy'] > 0.04) &
+        (df_original['mrgliq'] > 0.05) &
+        (df_original['liq2m'] > 200000)
+    ].sort_values(by=['pl', 'mrgliq'], ascending=[True, False])
+    
+    st.subheader(f"Melhores Ações Fundamentalistas ({len(df_best)})")
+    if not df_best.empty:
+        df_show = df_best.copy()
+        df_show['Preço'] = df_show['cotacao'].apply(fmt_currency)
+        df_show['P/L'] = df_show['pl'].round(2)
+        df_show['EV/EBIT'] = df_show['evebit'].round(2)
+        df_show['ROE'] = df_show['roe'].apply(fmt_pct)
+        df_show['Div. Yield'] = df_show['dy'].apply(fmt_pct)
+        df_show['Margem Líq'] = df_show['mrgliq'].apply(fmt_pct)
+        
+        st.dataframe(
+            df_show[['papel', 'empresa', 'Preço', 'P/L', 'EV/EBIT', 'ROE', 'Div. Yield', 'Margem Líq']],
+            use_container_width=True,
+            column_config={
+                "papel": st.column_config.TextColumn("Ativo"),
+                "empresa": st.column_config.TextColumn("Empresa"),
+            }
+        )
+    else:
+        st.info("Nenhuma empresa atendeu a todos os critérios restritivos severos no momento.")
+        
+    st.markdown("---")
+    
+    # Empresas de Risco
+    list_rj = ['OIBR3', 'OIBR4', 'AMER3', 'GOLL4', 'AZUL4']
+    df_warning = df_original[
+        (df_original['divbpatr'] > 3.0) | df_original['papel'].isin(list_rj)
+    ].sort_values(by='divbpatr', ascending=False)
+    
+    st.subheader(f"⚠️ Empresas com Alavancagem Elevada ou RJ ({len(df_warning)})")
+    if not df_warning.empty:
+        df_warn_show = df_warning.copy()
+        df_warn_show['Preço'] = df_warn_show['cotacao'].apply(fmt_currency)
+        df_warn_show['Alavancagem (Dív/Patr)'] = df_warn_show['divbpatr'].round(2)
+        
+        st.dataframe(
+            df_warn_show[['papel', 'empresa', 'Preço', 'Alavancagem (Dív/Patr)', 'quedaLucro', 'situacao']],
+            use_container_width=True,
+            column_config={
+                "papel": st.column_config.TextColumn("Ativo"),
+                "empresa": st.column_config.TextColumn("Empresa"),
+                "quedaLucro": st.column_config.TextColumn("Var. Resultados"),
+                "situacao": st.column_config.TextColumn("Situação"),
+            }
+        )
+        
+    st.markdown("---")
+    
+    # Gráfico interativo
+    st.subheader("📊 Gráfico Histórico Inteligente")
+    ticker_choice = st.selectbox("Selecione o papel para renderizar o histórico:", [stock['papel'] for stock in STOCK_DATABASE])
+    selected_stock = next((item for item in STOCK_DATABASE if item["papel"] == ticker_choice), None)
+    
+    if selected_stock and "historico" in selected_stock:
+        hist_df = pd.DataFrame(selected_stock["historico"])
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=hist_df['periodo'], y=hist_df['receita'] / 1e9,
+            name="Receita (Bi R$)", marker_color='#bfdbfe', yaxis='y1'
+        ))
+        fig.add_trace(go.Bar(
+            x=hist_df['periodo'], y=hist_df['lucro'] / 1e9,
+            name="Lucro Líquido (Bi R$)", marker_color='#3b82f6', yaxis='y1'
+        ))
+        fig.add_trace(go.Scatter(
+            x=hist_df['periodo'], y=hist_df['cotacao'],
+            name="Preço da Ação (R$)", line=dict(color='#ef4444', width=3), yaxis='y2'
+        ))
+        
+        fig.update_layout(
+            title=f"Histórico Financeiro - {ticker_choice} ({selected_stock['empresa']})",
+            yaxis=dict(title="Valores Operacionais (Bilhões de R$)", side="left"),
+            yaxis2=dict(title="Preço da Cotação (R$)", side="right", overlaying="y", showgrid=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=40, r=40, t=100, b=40),
+            plot_bgcolor='white',
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Notícias e Dividendos em duas colunas inferiores
+    col_news, col_divs = st.columns(2)
+    with col_news:
+        st.markdown("""
+        <div class="custom-card">
+            <h4 style="margin:0 0 12px 0; font-size:14px; font-weight:700; color:#1e3a8a;">📰 Notícias Recentes do Mercado</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        for news in MARKET_NEWS:
+            st.markdown(f"""
+            <div style="border: 1px solid #f1f5f9; padding:12px; border-radius:10px; margin-bottom:8px; background-color:white;">
+                <span style="font-size:9px; color:#2563eb; background-color:#eff6ff; padding:2px 6px; border-radius:4px; font-family:monospace; font-weight:700;">{news['source'].upper()}</span>
+                <p style="font-size:12px; font-weight:600; margin:6px 0 2px 0; color:#1e293b;">{news['title']}</p>
+                <a href="{news['link']}" target="_blank" style="font-size:11px; text-decoration:none; color:#3b82f6;">Ver cobertura original →</a>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    with col_divs:
+        st.markdown("""
+        <div class="custom-card">
+            <h4 style="margin:0 0 12px 0; font-size:14px; font-weight:700; color:#047857;">💰 Últimos Dividendos Anunciados (B3)</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        for div in LATEST_DIVIDENDS:
+            st.markdown(f"""
+            <div style="display:flex; justify-content:space-between; align-items:center; border: 1px solid #f1f5f9; padding:14px; border-radius:12px; margin-bottom:8px; background-color:white;">
+                <div>
+                    <span style="font-size:13px; font-weight:700; color:#0f172a; font-family:'JetBrains Mono', monospace;">{div['ativo']}</span>
+                    <span style="font-size:11px; color:#64748b; margin-left:8px;">Ex-data: {div['data']}</span>
+                </div>
+                <div style="font-weight:700; font-size:13px; color:#059669; margin-left:auto;">
+                    {fmt_currency(div['valor'])}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+elif active_tab == "✨ Fórmula Mágica":
+    st.markdown("""
+    <div class="custom-card">
+        <h4 style="color:#4f46e5; font-weight:700; margin:0 0 4px 0; font-size:14px; font-family:'JetBrains Mono', monospace;">✨ JOEL GREENBLATT METHODOLOGY</h4>
+        <h3 style="margin:0 0 8px 0; font-weight:800; font-size:18px;">Fórmula Mágica do Mercado B3</h3>
+        <p style="color:#475569; font-size:13px; line-height:1.5;">
+            Rankeia as empresas com base no menor somatório de Rank de EY (Earning Yield) e Rank de ROIC (Retorno sobre Capital Investido). 
+            <strong>Menor pontuação agregada lidera o topo das compras recomendadas!</strong>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    df_magic = df_original[
+        (df_original['liq2m'] > 100000) & (df_original['evebit'] > 0)
+    ].copy()
+    
+    df_magic['rank_ey'] = df_magic['evebit'].rank(ascending=True, method='first')
+    df_magic['rank_roic'] = df_magic['roic'].rank(ascending=False, method='first')
+    df_magic['score_magico'] = df_magic['rank_ey'] + df_magic['rank_roic']
+    df_magic['ey'] = 1 / df_magic['evebit']
+    df_magic_sorted = df_magic.sort_values(by='score_magico').head(40)
+    
+    st.subheader("Lista Tática Fórmula Mágica")
+    
+    df_mshow = df_magic_sorted.copy()
+    df_mshow['Preço'] = df_mshow['cotacao'].apply(fmt_currency)
+    df_mshow['Earning Yield'] = df_mshow['ey'].apply(fmt_pct)
+    df_mshow['ROIC'] = df_mshow['roic'].apply(fmt_pct)
+    df_mshow['EV/EBIT'] = df_mshow['evebit'].round(2)
+    df_mshow['Score Mágico'] = df_mshow['score_magico'].astype(int)
+    
+    st.dataframe(
+        df_mshow[['papel', 'Preço', 'Score Mágico', 'Earning Yield', 'EV/EBIT', 'ROIC']],
+        use_container_width=True,
+        column_config={
+            "papel": st.column_config.TextColumn("Ativo"),
+            "Score Mágico": st.column_config.NumberColumn("Score (Menor é Melhor)"),
+        }
+    )
+
+elif active_tab == "💎 Graham Valuation":
+    st.markdown("""
+    <div class="custom-card">
+        <h4 style="color:#d97706; font-weight:700; margin:0 0 4px 0; font-size:14px; font-family:'JetBrains Mono', monospace;">💎 BENJAMIN GRAHAM VALUE INVESTING</h4>
+        <h3 style="margin:0 0 8px 0; font-weight:800; font-size:18px;">Preço Justo e Margem de Segurança Graham</h3>
+        <p style="color:#475569; font-size:13px; line-height:1.5;">
+            Calculado sobre a clássica modelagem: <strong>V.I = Raiz(22.5 * LPA * VPA)</strong>. 
+            Uma margem de segurança física indica se o preço de mercado oferece desconto justo em relação ao valor contábil real.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    df_graham = df_original[(df_original['pl'] > 0) & (df_original['vpa'] > 0) & (df_original['lpa'] > 0)].copy()
+    df_graham['valor_intrinseco'] = (22.5 * df_graham['lpa'] * df_graham['vpa']) ** 0.5
+    df_graham['ratio'] = df_graham['valor_intrinseco'] / df_graham['cotacao']
+    df_graham['status'] = df_graham['ratio'].apply(lambda x: 'Barata (Desconto)' if x > 1.0 else 'Valor Esticado')
+    
+    df_g_sorted = df_graham.sort_values(by='ratio', ascending=False)
+    
+    st.subheader("Margem de Segurança Graham")
+    
+    df_gshow = df_g_sorted.copy()
+    df_gshow['Preço Atual'] = df_gshow['cotacao'].apply(fmt_currency)
+    df_gshow['Preço Justo (V.I)'] = df_gshow['valor_intrinseco'].apply(fmt_currency)
+    df_gshow['Upside Margem'] = df_gshow['ratio'].round(2).apply(lambda x: f"{x}x")
+    df_gshow['LPA'] = df_gshow['lpa'].apply(fmt_currency)
+    df_gshow['VPA'] = df_gshow['vpa'].apply(fmt_currency)
+    
+    st.dataframe(
+        df_gshow[['papel', 'Preço Atual', 'Preço Justo (V.I)', 'Upside Margem', 'status', 'LPA', 'VPA']],
+        use_container_width=True,
+        column_config={
+            "papel": st.column_config.TextColumn("Ativo"),
+            "status": st.column_config.TextColumn("Avaliação Graham"),
+        }
+    )
+
+elif active_tab == "📈 EPS Diluído":
+    st.markdown("""
+    <div class="custom-card">
+        <h4 style="color:#2563eb; font-weight:700; margin:0 0 4px 0; font-size:14px; font-family:'JetBrains Mono', monospace;">📈 EARNINGS PER SHARE (EPS)</h4>
+        <h3 style="margin:0 0 8px 0; font-weight:800; font-size:18px;">EPS Líquido Trimestral Robusto</h3>
+        <p style="color:#475569; font-size:13px; line-height:1.5;">
+            Foco em empresas líquidas com lucro por ação diluído superior a R$ 1,00 no trimestre analisado, garantindo robustez financeira de curto prazo substancial.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col_lh, col_symbol = st.columns([2, 3])
+    with col_lh:
+        df_eps = df_original[df_original['epsTrimestral'] > 1.0].sort_values(by='epsTrimestral', ascending=False)
+        st.write("📊 Destaques Trimestrais em EPS:")
+        for _, stock in df_eps.iterrows():
+            st.markdown(f"""
+            <div style="background-color: white; border: 1px solid #f1f5f9; padding: 12.5px; border-radius: 12px; margin-bottom: 8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="color:#0f172a; font-family:monospace;">{stock['papel']}</strong>
+                    <span style="font-weight:700; color:#10b981; font-size:13px;">{fmt_currency(stock['epsTrimestral'])}</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:10.5px; color:#475569; margin-top:4px;">
+                    <span>{stock['empresa']}</span>
+                    <span>Ref: {stock['dataRef']}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    with col_symbol:
+        st.markdown("""
+        <div style="background-color:white; border: 1px solid #e1e8f0; border-radius:18px; padding:18px; text-align:center;">
+            <p style="color:#475569; font-size:12px; font-weight:700; margin-bottom:12px;">📈 SINAIS COMPLEMENTARES TRADINGVIEW</p>
+            <p style="font-size:11px; color:#64748b; line-height:1.4;">
+                Aproveite para cruzar esses dados fundamentais com a análise gráfica de curto e médio prazo de sua corretora.
+            </p>
+            <div style="font-size: 15px; font-weight:bold; color: #1e3a8a; margin-top:16px;">
+                Petrobras Bolsa (PETR4) • Ativo de Referência
+            </div>
+            <div style="background-color:#eff6ff; padding:8px 12px; border-radius:8.5px; font-size:11px; color:#1d4ed8; font-weight:600; display:inline-block; margin-top:12px;">
+                Sinal de Compra Forte Ativo nos principais osciladores
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+elif active_tab == "📉 Assimetria Lucro/Preço":
+    st.markdown("""
+    <div class="custom-card">
+        <h4 style="color:#10b981; font-weight:700; margin:0 0 4px 0; font-size:14px; font-family:'JetBrains Mono', monospace;">📉 ASSIMETRIA DE CURTO PRAZO</h4>
+        <h3 style="margin:0 0 8px 0; font-weight:800; font-size:18px;">Preço Atrasado em Relação ao Lucro</h3>
+        <p style="color:#475569; font-size:13px; margin:0; line-height:1.5;">
+            Detecta situações assimétricas de alta probabilidade tática: 
+            <strong>empresas onde a direção dos lucros líquidos subiu firmemente nas últimas leituras, mas o preço das ações se manteve desvalorizado ou atrasado na bolsa</strong>.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.subheader("Ativo com Assimetria Detectada")
+    asymmetry_ticker = st.selectbox("Selecione a ação sob assimetria:", ["BBSE3", "TAEE11", "PETR4"])
+    
+    asym_stock = next((item for item in STOCK_DATABASE if item["papel"] == asymmetry_ticker), None)
+    if asym_stock and "historico" in asym_stock:
+        hist_df = pd.DataFrame(asym_stock["historico"])
+        
+        fig = go.Figure()
+        
+        lucros_norm = (hist_df['lucro'] - hist_df['lucro'].min()) / (hist_df['lucro'].max() - hist_df['lucro'].min())
+        cots_norm = (hist_df['cotacao'] - hist_df['cotacao'].min()) / (hist_df['cotacao'].max() - hist_df['cotacao'].min())
+        
+        fig.add_trace(go.Scatter(
+            x=hist_df['periodo'], y=lucros_norm,
+            name="Curva de Lucros (Normalizada)", line=dict(color='#10b981', width=4, dash='dash')
+        ))
+        fig.add_trace(go.Scatter(
+            x=hist_df['periodo'], y=cots_norm,
+            name="Curva de Preços (Normalizada)", line=dict(color='#ef4444', width=4)
+        ))
+        
+        fig.update_layout(
+            title=f"Comportamento de Boca de Jacaré (Assimetria) - {asymmetry_ticker}",
+            yaxis=dict(title="Progressão Relativa de Trajetórias", range=[-0.1, 1.1]),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            plot_bgcolor='white',
+            hovermode="x"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown(f"""
+        <div style="background-color:#ecfdf5; border: 1px solid #a7f3d0; padding:16px; border-radius:16px; font-size:12px; color:#065f46; display:flex; align-items:center; gap:8px;">
+            <span>✅</span>
+            <span>
+                <strong>Sinal de Assimetria Confirmado para {asymmetry_ticker}:</strong> A linha tracejada verde (Direção de Lucros Acumulados) 
+                termina visualmente acima da linha vermelha contínua (Cotação de Mercado), configurando distorção de precificação com alta margem!
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("<br><hr>", unsafe_allow_html=True)
+
+# --- AFILIADOS E PATROCINADORES DO CANAL ---
+st.markdown("<h4 style='text-align:center; font-weight:700; color:#475569; font-size:13px; text-transform:uppercase; letter-spacing:0.5px;'>Nossos Membros Patrocinadores Oficiais</h4>", unsafe_allow_html=True)
+col_nomad, col_mp = st.columns(2)
+
+with col_nomad:
+    st.markdown("""
+    <a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I&n=Jader" target="_blank" style="text-decoration:none; color:inherit;">
+        <div class="custom-card" style="transition:all 0.2s; cursor:pointer;" onmouseover="this.style.borderColor='#d97706'">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                <span style="font-size:22px;">✈️</span>
+                <strong style="font-size:14px; color:#1e293b;">Nomad: Conta em Dólar Gratuita</strong>
+            </div>
+            <p style="font-size:12px; color:#64748b; line-height:1.4; margin-bottom:12px;">
+                Abra sua conta bancária e de investimentos global nos EUA sem taxas de manutenção corporativa. 
+                Garante taxa cambial zero na primeira conversão!
+            </p>
+            <div style="background-color:#fffbeb; color:#b45309; text-align:center; padding:10px; border-radius:10px; font-size:11.5px; font-weight:600;">
+                Abrir Conta Internacional Nomad →
+            </div>
+        </div>
+    </a>
+    """, unsafe_allow_html=True)
+    
+with col_mp:
+    st.markdown("""
+    <a href="https://mpago.li/1VydVhw" target="_blank" style="text-decoration:none; color:inherit;">
+        <div class="custom-card" style="transition:all 0.2s; cursor:pointer;" onmouseover="this.style.borderColor='#0284c7'">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                <span style="font-size:22px;">🤝</span>
+                <strong style="font-size:14px; color:#1e293b;">Mercado Pago: R$ 30,00 Grátis de Desconto</strong>
+            </div>
+            <p style="font-size:12px; color:#64748b; line-height:1.4; margin-bottom:12px;">
+                Crie sua conta digital líder em rendimentos e maquininhas Point no Mercado Pago para recolher recebimentos 
+                e conquiste um cupom especial exclusivo!
+            </p>
+            <div style="background-color:#f0f9ff; color:#0369a1; text-align:center; padding:10px; border-radius:10px; font-size:11.5px; font-weight:600;">
+                Resgatar Bônus Mercado Pago R$ 30 →
+            </div>
+        </div>
+    </a>
+    """, unsafe_allow_html=True)
+
+# --- FOOTER ---
+st.markdown("""
+<div style="background-color:#0f172a; border-radius:18px; padding:24px; text-align:center; color:#94a3b8; font-size:12px; margin-top:32px;">
+    <p style="font-weight:700; color:white; margin:0 0 4px 0;">Ibovespa Fundamentalista © 2026</p>
+    <p style="margin:0 0 16px 0;">Desenvolvido com máxima performance e polimento técnico profissional.</p>
+    <div style="display:flex; justify-content:center; gap:16px;">
+        <span style="cursor:pointer;">Termos de Uso</span>
+        <span style="cursor:pointer;">Políticas Gerais</span>
+        <span style="background-color:#1e293b; color:#cbd5e1; padding:2px 8px; border-radius:4px; font-family:monospace; font-size:10px;">B3 IB_V_2025</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
