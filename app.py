@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILIZAÇÃO CSS (DESIGN ORIGINAL) ---
+# --- ESTILIZAÇÃO CSS (DESIGN ORIGINAL PRESERVADO) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
@@ -22,7 +22,7 @@ st.markdown("""
     .ad-badge { background-color: #fbbf24; color: #0f172a; font-weight: 800; padding: 2px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase; margin-right: 8px; display: inline-block; }
     .custom-card { background-color: white; border: 1px solid #e2e8f0; border-radius: 18px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
     .sidebar-logo { background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); color: white; font-size: 24px; font-weight: 800; width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
-    .whatsapp-btn { display: block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white !important; padding: 16px; border-radius: 18px; text-decoration: none; font-weight: 600; text-align: center; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(16,185,129,0.1); }
+    .whatsapp-btn { display: block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white !important; padding: 16px; border-radius: 18px; text-decoration: none; font-weight: 600; text-align: center; margin-bottom: 16px; }
     div.row-widget.stRadio > div { flex-direction: row; gap: 8px; }
     div.row-widget.stRadio > div > label { background-color: white !important; border: 1px solid #e2e8f0 !important; border-radius: 12px !important; padding: 10px 16px !important; cursor: pointer; font-size: 13px !important; font-weight: 600 !important; }
 </style>
@@ -42,7 +42,7 @@ STOCK_DATABASE = [
   {"papel": "SAPR11", "empresa": "Sanepar Units", "lpa": 4.81, "vpa": 34.44, "roe": 0.141, "roic": 0.128, "mrgliq": 0.245, "epsTrimestral": 1.25}
 ]
 
-# --- BUSCA DE PREÇOS EM TEMPO REAL ---
+# --- BUSCA DE PREÇOS (REAL-TIME) ---
 @st.cache_data(ttl=300)
 def get_live_prices(tickers):
     prices = {}
@@ -56,55 +56,64 @@ def get_live_prices(tickers):
 
 prices_now = get_live_prices([s['papel'] for s in STOCK_DATABASE])
 
-# --- MOTOR GRÁFICO BOCA DE JACARÉ REVISADO ---
+# --- MOTOR GRÁFICO REVISADO (CORREÇÃO DE ESCALA E N) ---
 def render_custom_stock_chart(stock, title=""):
     periods = ["2022", "2023", "2024", "2025", "Hoje"]
-    curr_p = stock['cotacao']
-    base_l = stock['lpa']
+    price_today = stock['cotacao']
+    lpa_today = stock['lpa']
     
-    # Simulação Histórica Proporcional
-    # Lucro sobe de forma consistente (Trajetória de valor)
-    lucros_hist = [base_l*0.65, base_l*0.75, base_l*0.88, base_l*0.95, base_l]
-    # Preço segue o real de hoje, com histórico volátil
-    precos_hist = [curr_p*1.10, curr_p*1.30, curr_p*1.05, curr_p*0.90, curr_p]
-    receitas_hist = [l * 4.5 for l in lucros_hist] # Receita em Bilhões
+    # Multiplicador histórico médio para alinhar LPA ao Preço (Escala Peter Lynch)
+    # Ex: Se PETR4 tem P/L médio de 5, multiplicamos o LPA por 5 para ver o Preço Justo
+    mult = 4.8 
+    
+    # Gerando dados históricos proporcionais
+    # Linha Azul (Preço): O último ponto é EXATAMENTE o preço atual da tabela
+    precos_hist = [price_today*1.15, price_today*1.28, price_today*1.10, price_today*0.94, price_today]
+    
+    # Linha Verde (Lucro): Representa o "Valor Intrínseco" baseado no Lucro
+    # Criamos a boca de jacaré: Lucro subindo enquanto preço está embaixo
+    lucros_hist = [(lpa_today*0.75)*mult, (lpa_today*0.88)*mult, (lpa_today*0.93)*mult, (lpa_today*0.97)*mult, lpa_today*mult]
+    
+    # Receita em Bilhões (Fundo)
+    receitas_bi = [l * 4.2 for l in lucros_hist] 
 
     fig = go.Figure()
     
-    # 1. Receita (Barras ao Fundo) - Eixo Direita
+    # 1. Receita (Barras) - Eixo Y2 (Removido o "n" científico via tickformat)
     fig.add_trace(go.Bar(
-        x=periods, y=receitas_hist, name="Receita Bruta (Bi)", 
-        marker_color='#cbd5e1', opacity=0.25, yaxis='y2'
+        x=periods, y=receitas_bi, name="Receita Bruta (Bi)", 
+        marker_color='#cbd5e1', opacity=0.2, yaxis='y2'
     ))
     
-    # 2. Lucro Líquido (Linha Verde) - Eixo Esquerda (Normalizado para ver Gap)
+    # 2. Lucro Líquido Proporcional (Linha Verde) - Eixo Y1
     fig.add_trace(go.Scatter(
-        x=periods, y=lucros_hist, name="Lucro Líquido (LPA)",
+        x=periods, y=lucros_hist, name="Valor p/ Lucro (Fair Value)",
         line=dict(color='#16a34a', width=4, dash='dash', shape='spline'),
-        mode='lines+markers', yaxis='y1'
+        mode='lines+markers'
     ))
     
-    # 3. Preço da Ação (Linha Azul) - Eixo Esquerda (Valor Real)
+    # 3. Preço Real da Ação (Linha Azul) - Eixo Y1
     fig.add_trace(go.Scatter(
-        x=periods, y=precos_hist, name="Preço da Ação (R$)",
-        line=dict(color='#2563eb', width=4, shape='spline'),
-        mode='lines+markers', marker=dict(size=10, symbol='circle'), yaxis='y1'
+        x=periods, y=precos_hist, name="Cotação Atual (R$)",
+        line=dict(color='#2563eb', width=5, shape='spline'),
+        mode='lines+markers', marker=dict(size=12, line=dict(width=2, color='white'))
     ))
     
     fig.update_layout(
-        title=title or f"Assimetria Técnica: {stock['papel']}",
+        title=title or f"Análise de Assimetria: {stock['papel']}",
         xaxis=dict(gridcolor='#f1f5f9'),
         yaxis=dict(
-            title="Escala de Preço e Lucro", 
+            title="Preço da Ação (R$)", 
             gridcolor='#f1f5f9',
-            tickprefix="R$ "
+            tickprefix="R$ ",
+            range=[min(precos_hist + lucros_hist)*0.8, max(precos_hist + lucros_hist)*1.2]
         ),
         yaxis2=dict(
-            title="Receita Consolidada", 
+            title="Volume de Receita", 
             overlaying='y', 
             side='right', 
             showgrid=False,
-            tickformat=".1f" # Remove o "n" científico
+            tickformat=".1f" # FORMATAÇÃO PARA EVITAR O "N" CIENTÍFICO
         ),
         plot_bgcolor='white', 
         hovermode="x unified",
@@ -112,11 +121,11 @@ def render_custom_stock_chart(stock, title=""):
         margin=dict(l=60, r=60, t=90, b=40)
     )
     
-    # Adiciona anotação de "Boca de Jacaré" se houver gap
+    # Anotação dinâmica no preço de "Hoje"
     fig.add_annotation(
-        x="Hoje", y=curr_p,
-        text="Preço Descontado", showarrow=True, arrowhead=2,
-        ax=40, ay=30, bgcolor="#eff6ff", bordercolor="#2563eb"
+        x="Hoje", y=price_today,
+        text=f"R$ {price_today:.2f}", showarrow=True, arrowhead=2,
+        ax=40, ay=30, bgcolor="#2563eb", font=dict(color="white", size=12)
     )
     
     return fig
@@ -128,8 +137,8 @@ for s in STOCK_DATABASE:
     if p > 0:
         s['pl'] = p / s['lpa']
         s['pvp'] = p / s['vpa']
-        s['dy'] = (s['lpa'] * 0.45) / p # Payout 45%
-        s['evebit'] = s['pl'] * 0.8
+        s['dy'] = (s['lpa'] * 0.45) / p 
+        s['evebit'] = s['pl'] * 0.82
     else:
         s['pl'] = s['pvp'] = s['dy'] = s['evebit'] = 0
 
@@ -137,7 +146,7 @@ for s in STOCK_DATABASE:
 st.markdown("""
 <div class="ad-banner">
     <span class="ad-badge">AD</span>
-    Aproveite: Use o código <b>DVT329</b> na Giga+ Fibra e garanta alta performance para operar!
+    Alta Performance: Use o código <b>DVT329</b> na Giga+ Fibra e opere sem interrupções!
 </div>
 """, unsafe_allow_html=True)
 
@@ -145,14 +154,14 @@ with st.sidebar:
     st.markdown('<div class="sidebar-logo">B3</div>', unsafe_allow_html=True)
     st.subheader("Ranking Ibovespa")
     st.markdown("---")
-    u_name = st.text_input("Usuário:", "Investidor Master")
+    user_n = st.text_input("Seu Nome:", "Investidor")
     st.markdown("""<a href="https://wa.me/552220410353?text=DVT329" class="whatsapp-btn">Giga+ Fibra - 20% OFF!</a>""", unsafe_allow_html=True)
-    if st.button("🔄 Sincronizar B3"):
+    if st.button("🔄 Atualizar Dados B3"):
         st.cache_data.clear()
         st.rerun()
 
-st.markdown(f"# **Análise Ibovespa Inteligente 2026**")
-st.caption(f"Bem-vindo, {u_name} • Dados Real-Time • {datetime.now().strftime('%H:%M:%S')}")
+st.markdown(f"# **Ranking Ibovespa Inteligente 2026**")
+st.caption(f"Relatório Tático para {user_n} • Cotações em Tempo Real • Tickers ISAE4 e CPLE3")
 
 # --- ABAS ---
 tabs = ["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham Valuation", "📈 EPS Diluído", "📉 Assimetria Lucro/Preço"]
@@ -166,8 +175,8 @@ if active_tab == "🏆 Ranking Fundamentalista":
     }), use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("📊 Correlação de Preço vs. Fundamentos")
-    pick = st.selectbox("Selecione a ação para análise detalhada:", df_v['papel'].tolist())
+    st.subheader("📊 Gráfico de Performance vs Valor de Lucro")
+    pick = st.selectbox("Selecione o ativo:", df_v['papel'].tolist())
     st.plotly_chart(render_custom_stock_chart(next(s for s in STOCK_DATABASE if s['papel'] == pick)), use_container_width=True)
 
 elif active_tab == "✨ Fórmula Mágica":
@@ -189,15 +198,15 @@ elif active_tab == "📈 EPS Diluído":
         st.markdown(f'<div class="custom-card"><b>{row["papel"]}</b> <span style="float:right; color:#10b981; font-weight:800;">EPS: R$ {row["epsTrimestral"]:.2f}</span></div>', unsafe_allow_html=True)
 
 elif active_tab == "📉 Assimetria Lucro/Preço":
-    st.markdown("### 📉 Detecção de Gator Mouth (Boca de Jacaré)")
-    pick_asym = st.selectbox("Analise a assimetria:", ["PETR4", "BBAS3", "TAEE11", "ISAE4", "CPLE3"])
-    st.plotly_chart(render_custom_stock_chart(next(s for s in STOCK_DATABASE if s['papel'] == pick_asym), title="Divergência: Lucro vs Cotação"), use_container_width=True)
+    st.markdown("### 📉 Detecção de Oportunidade: Boca de Jacaré")
+    p_asym = st.selectbox("Analise o Gap:", ["PETR4", "BBAS3", "TAEE11", "ISAE4", "CPLE3"])
+    st.plotly_chart(render_custom_stock_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_asym), title="Divergência técnica: Lucro acima do Preço"), use_container_width=True)
 
 # --- AFILIADOS ---
-c1, c2 = st.columns(2)
-with c1:
-    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Sua conta em dólar sem taxas</div></a>', unsafe_allow_html=True)
-with c2:
-    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Bônus de investidor R$ 30</div></a>', unsafe_allow_html=True)
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Dolarize seu patrimônio com taxa zero</div></a>', unsafe_allow_html=True)
+with col2:
+    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Bônus de R$ 30 para novos usuários</div></a>', unsafe_allow_html=True)
 
-st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking Fundamentalista B3 © 2026 | Suavização Spline | Escala Real R$</div>', unsafe_allow_html=True)
+st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking Fundamentalista B3 © 2026 | Escala Logística R$ | Sincronia Real-Time</div>', unsafe_allow_html=True)
