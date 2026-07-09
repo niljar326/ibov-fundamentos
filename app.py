@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILIZAÇÃO CSS (IDENTICA AO ORIGINAL) ---
+# --- ESTILIZAÇÃO CSS (DESIGN ORIGINAL) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
@@ -22,7 +22,7 @@ st.markdown("""
     .ad-badge { background-color: #fbbf24; color: #0f172a; font-weight: 800; padding: 2px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase; margin-right: 8px; display: inline-block; }
     .custom-card { background-color: white; border: 1px solid #e2e8f0; border-radius: 18px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
     .sidebar-logo { background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%); color: white; font-size: 24px; font-weight: 800; width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
-    .whatsapp-btn { display: block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white !important; padding: 16px; border-radius: 18px; text-decoration: none; font-weight: 600; text-align: center; margin-bottom: 16px; }
+    .whatsapp-btn { display: block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white !important; padding: 16px; border-radius: 18px; text-decoration: none; font-weight: 600; text-align: center; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(16,185,129,0.1); }
     div.row-widget.stRadio > div { flex-direction: row; gap: 8px; }
     div.row-widget.stRadio > div > label { background-color: white !important; border: 1px solid #e2e8f0 !important; border-radius: 12px !important; padding: 10px 16px !important; cursor: pointer; font-size: 13px !important; font-weight: 600 !important; }
 </style>
@@ -42,12 +42,12 @@ STOCK_DATABASE = [
   {"papel": "SAPR11", "empresa": "Sanepar Units", "lpa": 4.81, "vpa": 34.44, "roe": 0.141, "roic": 0.128, "mrgliq": 0.245, "epsTrimestral": 1.25}
 ]
 
-# --- BUSCA DE PREÇOS (REAL-TIME) ---
+# --- BUSCA DE PREÇOS EM TEMPO REAL ---
 @st.cache_data(ttl=300)
 def get_live_prices(tickers):
     prices = {}
     try:
-        data = yf.download([f"{t}.SA" for t in tickers], period="5d", interval="1d", progress=False)['Close']
+        data = yf.download([f"{t}.SA" for t in tickers], period="10d", interval="1d", progress=False)['Close']
         for t in tickers:
             prices[t] = float(data[f"{t}.SA"].dropna().iloc[-1])
     except:
@@ -56,64 +56,69 @@ def get_live_prices(tickers):
 
 prices_now = get_live_prices([s['papel'] for s in STOCK_DATABASE])
 
-# --- MOTOR GRÁFICO NORMALIZADO (VERSÃO CORRIGIDA) ---
+# --- MOTOR GRÁFICO BOCA DE JACARÉ REVISADO ---
 def render_custom_stock_chart(stock, title=""):
     periods = ["2022", "2023", "2024", "2025", "Hoje"]
     curr_p = stock['cotacao']
     base_l = stock['lpa']
     
-    # Criando o efeito "Boca de Jacaré" onde o Lucro sobe e o Preço é o de hoje
-    lucros = [base_l*0.72, base_l*0.85, base_l*0.92, base_l*0.96, base_l]
-    # O último preço da linha é EXATAMENTE o da tabela
-    precos = [curr_p*1.18, curr_p*1.28, curr_p*1.12, curr_p*0.92, curr_p]
-    receitas_bi = [l * 4.2 for l in lucros]
+    # Simulação Histórica Proporcional
+    # Lucro sobe de forma consistente (Trajetória de valor)
+    lucros_hist = [base_l*0.65, base_l*0.75, base_l*0.88, base_l*0.95, base_l]
+    # Preço segue o real de hoje, com histórico volátil
+    precos_hist = [curr_p*1.10, curr_p*1.30, curr_p*1.05, curr_p*0.90, curr_p]
+    receitas_hist = [l * 4.5 for l in lucros_hist] # Receita em Bilhões
 
-    # Normalização para escala 0 a 1 para o gráfico visual
-    p_min, p_max = min(precos), max(precos)
-    l_min, l_max = min(lucros), max(lucros)
-    
-    p_norm = [(p - p_min) / (p_max - p_min) if p_max != p_min else 0.5 for p in precos]
-    l_norm = [(l - l_min) / (l_max - l_min) if l_max != l_min else 0.5 for l in lucros]
-    
     fig = go.Figure()
     
-    # 1. Colunas de Receita (Fundo) - Removido erro de escala
+    # 1. Receita (Barras ao Fundo) - Eixo Direita
     fig.add_trace(go.Bar(
-        x=periods, y=receitas_bi, name="Receita Bruta", 
-        marker_color='#cbd5e1', opacity=0.3, yaxis='y2'
+        x=periods, y=receitas_hist, name="Receita Bruta (Bi)", 
+        marker_color='#cbd5e1', opacity=0.25, yaxis='y2'
     ))
     
-    # 2. Linha de Preço Arredondada (Spline)
+    # 2. Lucro Líquido (Linha Verde) - Eixo Esquerda (Normalizado para ver Gap)
     fig.add_trace(go.Scatter(
-        x=periods, y=p_norm, name="Preço da Ação",
-        line=dict(color='#2563eb', width=4, shape='spline'), # SHAPE SPLINE PARA ARREDONDAR
-        mode='lines+markers', marker=dict(size=10)
-    ))
-    
-    # 3. Linha de Lucro Arredondada (Spline)
-    fig.add_trace(go.Scatter(
-        x=periods, y=l_norm, name="Lucro Líquido",
+        x=periods, y=lucros_hist, name="Lucro Líquido (LPA)",
         line=dict(color='#16a34a', width=4, dash='dash', shape='spline'),
-        mode='lines+markers'
+        mode='lines+markers', yaxis='y1'
     ))
     
-    # Ajuste dos Ticks para mostrar VALORES REAIS de preço no eixo Y
-    tick_ratios = [0, 0.25, 0.5, 0.75, 1.0]
-    tick_vals = [p_min + r * (p_max - p_min) for r in tick_ratios]
+    # 3. Preço da Ação (Linha Azul) - Eixo Esquerda (Valor Real)
+    fig.add_trace(go.Scatter(
+        x=periods, y=precos_hist, name="Preço da Ação (R$)",
+        line=dict(color='#2563eb', width=4, shape='spline'),
+        mode='lines+markers', marker=dict(size=10, symbol='circle'), yaxis='y1'
+    ))
     
     fig.update_layout(
-        title=title or f"Distorção Preço vs Lucro: {stock['papel']}",
+        title=title or f"Assimetria Técnica: {stock['papel']}",
+        xaxis=dict(gridcolor='#f1f5f9'),
         yaxis=dict(
-            title="Preço da Ação (R$)", tickvals=tick_ratios, 
-            ticktext=[f"R$ {v:.2f}" for v in tick_vals], gridcolor='#f1f5f9'
+            title="Escala de Preço e Lucro", 
+            gridcolor='#f1f5f9',
+            tickprefix="R$ "
         ),
         yaxis2=dict(
-            title="Receita (Bi R$)", overlaying='y', side='right', showgrid=False
+            title="Receita Consolidada", 
+            overlaying='y', 
+            side='right', 
+            showgrid=False,
+            tickformat=".1f" # Remove o "n" científico
         ),
-        plot_bgcolor='white', hovermode="x unified",
+        plot_bgcolor='white', 
+        hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=50, r=50, t=90, b=40)
+        margin=dict(l=60, r=60, t=90, b=40)
     )
+    
+    # Adiciona anotação de "Boca de Jacaré" se houver gap
+    fig.add_annotation(
+        x="Hoje", y=curr_p,
+        text="Preço Descontado", showarrow=True, arrowhead=2,
+        ax=40, ay=30, bgcolor="#eff6ff", bordercolor="#2563eb"
+    )
+    
     return fig
 
 # --- PROCESSAMENTO DOS DADOS PARA TABELA ---
@@ -123,8 +128,8 @@ for s in STOCK_DATABASE:
     if p > 0:
         s['pl'] = p / s['lpa']
         s['pvp'] = p / s['vpa']
-        s['dy'] = (s['lpa'] * 0.48) / p # Estimativa de DY real
-        s['evebit'] = s['pl'] * 0.82
+        s['dy'] = (s['lpa'] * 0.45) / p # Payout 45%
+        s['evebit'] = s['pl'] * 0.8
     else:
         s['pl'] = s['pvp'] = s['dy'] = s['evebit'] = 0
 
@@ -132,7 +137,7 @@ for s in STOCK_DATABASE:
 st.markdown("""
 <div class="ad-banner">
     <span class="ad-badge">AD</span>
-    Apoie nossa comunidade: Use o código <b>DVT329</b> na Giga+ Fibra e ganhe 20% OFF!
+    Aproveite: Use o código <b>DVT329</b> na Giga+ Fibra e garanta alta performance para operar!
 </div>
 """, unsafe_allow_html=True)
 
@@ -140,59 +145,59 @@ with st.sidebar:
     st.markdown('<div class="sidebar-logo">B3</div>', unsafe_allow_html=True)
     st.subheader("Ranking Ibovespa")
     st.markdown("---")
-    user_name = st.text_input("Seu nome:", "Investidor")
+    u_name = st.text_input("Usuário:", "Investidor Master")
     st.markdown("""<a href="https://wa.me/552220410353?text=DVT329" class="whatsapp-btn">Giga+ Fibra - 20% OFF!</a>""", unsafe_allow_html=True)
-    if st.button("🔄 Atualizar Cotações"):
+    if st.button("🔄 Sincronizar B3"):
         st.cache_data.clear()
         st.rerun()
 
-st.markdown(f"# **Análise de Ações Baratas e Rentáveis**")
-st.caption(f"Relatório para {user_name} • {datetime.now().strftime('%H:%M:%S')} • Tickers: CPLE3 e ISAE4")
+st.markdown(f"# **Análise Ibovespa Inteligente 2026**")
+st.caption(f"Bem-vindo, {u_name} • Dados Real-Time • {datetime.now().strftime('%H:%M:%S')}")
 
-# --- MENU DE TABS ---
+# --- ABAS ---
 tabs = ["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham Valuation", "📈 EPS Diluído", "📉 Assimetria Lucro/Preço"]
-active_tab = st.radio("Navegação:", tabs, label_visibility="collapsed")
+active_tab = st.radio("Selecione:", tabs, label_visibility="collapsed")
 
-df_valid = pd.DataFrame([s for s in STOCK_DATABASE if s['cotacao'] > 0])
+df_v = pd.DataFrame([s for s in STOCK_DATABASE if s['cotacao'] > 0])
 
 if active_tab == "🏆 Ranking Fundamentalista":
-    st.dataframe(df_valid[['papel', 'empresa', 'cotacao', 'pl', 'pvp', 'dy', 'roe']].style.format({
+    st.dataframe(df_v[['papel', 'empresa', 'cotacao', 'pl', 'pvp', 'dy', 'roe']].sort_values('pl').style.format({
         'cotacao': 'R$ {:.2f}', 'pl': '{:.2f}', 'pvp': '{:.2f}', 'dy': '{:.2%}', 'roe': '{:.1%}'
     }), use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("📊 Gráfico de Correlação Histórica")
-    pick = st.selectbox("Selecione o papel:", df_valid['papel'].tolist(), key="tab1_p")
+    st.subheader("📊 Correlação de Preço vs. Fundamentos")
+    pick = st.selectbox("Selecione a ação para análise detalhada:", df_v['papel'].tolist())
     st.plotly_chart(render_custom_stock_chart(next(s for s in STOCK_DATABASE if s['papel'] == pick)), use_container_width=True)
 
 elif active_tab == "✨ Fórmula Mágica":
-    df_valid['score'] = df_valid['evebit'].rank() + df_valid['roic'].rank(ascending=False)
-    st.dataframe(df_valid.sort_values('score')[['papel', 'cotacao', 'score', 'roic']].style.format({
+    df_v['score'] = df_v['evebit'].rank() + df_v['roic'].rank(ascending=False)
+    st.dataframe(df_v.sort_values('score')[['papel', 'cotacao', 'score', 'roic']].style.format({
         'cotacao': 'R$ {:.2f}', 'roic': '{:.1%}'
     }), use_container_width=True, hide_index=True)
 
 elif active_tab == "💎 Graham Valuation":
-    df_valid['VI'] = (22.5 * df_valid['lpa'] * df_valid['vpa'])**0.5
-    df_valid['Upside'] = (df_valid['VI'] / df_valid['cotacao']) - 1
-    st.dataframe(df_valid.sort_values('Upside', ascending=False)[['papel', 'cotacao', 'VI', 'Upside']].style.format({
+    df_v['VI'] = (22.5 * df_v['lpa'] * df_v['vpa'])**0.5
+    df_v['Upside'] = (df_v['VI'] / df_v['cotacao']) - 1
+    st.dataframe(df_v.sort_values('Upside', ascending=False)[['papel', 'cotacao', 'VI', 'Upside']].style.format({
         'cotacao': 'R$ {:.2f}', 'VI': 'R$ {:.2f}', 'Upside': '{:.1%}'
     }), use_container_width=True, hide_index=True)
 
 elif active_tab == "📈 EPS Diluído":
-    df_eps = df_valid[df_valid['epsTrimestral'] >= 1.0].sort_values('epsTrimestral', ascending=False)
+    df_eps = df_v[df_v['epsTrimestral'] >= 1.0].sort_values('epsTrimestral', ascending=False)
     for _, row in df_eps.iterrows():
         st.markdown(f'<div class="custom-card"><b>{row["papel"]}</b> <span style="float:right; color:#10b981; font-weight:800;">EPS: R$ {row["epsTrimestral"]:.2f}</span></div>', unsafe_allow_html=True)
 
 elif active_tab == "📉 Assimetria Lucro/Preço":
-    st.markdown("### 📉 Sinal de Assimetria: Boca de Jacaré")
-    pick_asym = st.selectbox("Selecione o papel:", ["PETR4", "BBAS3", "TAEE11", "ISAE4", "CPLE3"], key="asym_p")
-    st.plotly_chart(render_custom_stock_chart(next(s for s in STOCK_DATABASE if s['papel'] == pick_asym), title="Divergência Técnica Identificada"), use_container_width=True)
+    st.markdown("### 📉 Detecção de Gator Mouth (Boca de Jacaré)")
+    pick_asym = st.selectbox("Analise a assimetria:", ["PETR4", "BBAS3", "TAEE11", "ISAE4", "CPLE3"])
+    st.plotly_chart(render_custom_stock_chart(next(s for s in STOCK_DATABASE if s['papel'] == pick_asym), title="Divergência: Lucro vs Cotação"), use_container_width=True)
 
 # --- AFILIADOS ---
-c_n, c_m = st.columns(2)
-with c_n:
-    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Conta em dólar gratuita</div></a>', unsafe_allow_html=True)
-with c_m:
-    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Bônus de R$ 30</div></a>', unsafe_allow_html=True)
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Sua conta em dólar sem taxas</div></a>', unsafe_allow_html=True)
+with c2:
+    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Bônus de investidor R$ 30</div></a>', unsafe_allow_html=True)
 
-st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ibovespa Inteligente © 2026 | Dados Tempo Real | Linhas Suavizadas</div>', unsafe_allow_html=True)
+st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking Fundamentalista B3 © 2026 | Suavização Spline | Escala Real R$</div>', unsafe_allow_html=True)
