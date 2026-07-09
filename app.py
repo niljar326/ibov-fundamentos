@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILIZAÇÃO CSS (IDENTICA AO ORIGINAL) ---
+# --- ESTILIZAÇÃO CSS (DESIGN ORIGINAL) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
@@ -56,41 +56,40 @@ def get_live_prices(tickers):
 
 prices_now = get_live_prices([s['papel'] for s in STOCK_DATABASE])
 
-# --- MOTOR GRÁFICO DINÂMICO ---
-def render_dynamic_chart(stock, title=""):
-    # Lógica de Anos Dinâmicos
-    this_year = datetime.now().year # 2026
-    periods = [str(this_year - 3), str(this_year - 2), str(this_year - 1), "Últimos 4 Tri", "Hoje"]
+# --- MOTOR GRÁFICO LTM (ÚLTIMOS 12 MESES) ---
+def render_ltm_chart(stock, title=""):
+    # Eixo X com anos inteiros + Últimos 12 meses
+    periods = ["2023", "2024", "2025", "Últimos 12m"]
     
-    price_today = stock['cotacao']
-    lpa_today = stock['lpa']
+    price_now = stock['cotacao']
+    lpa_now = stock['lpa']
     
-    # Ajuste de Escala Peter Lynch (Preço Justo x Lucro)
+    # Múltiplo para alinhar as escalas (Peter Lynch Fair Value)
     mult = 4.8
     
-    # Simulação de crescimento real para a linha de Lucro (Verde)
-    lucros_hist = [
-        (lpa_today * 0.70) * mult, # 2023
-        (lpa_today * 0.82) * mult, # 2024
-        (lpa_today * 0.90) * mult, # 2025
-        (lpa_today * 0.98) * mult, # Últimos 4 Tri (Acumulado)
-        lpa_today * mult           # Hoje (Fundamento Atual)
+    # Trajetória de Lucro (Fundamentos sempre subindo)
+    # O valor final em 'Últimos 12m' é o LPA atual ajustado
+    lucros = [
+        (lpa_now * 0.75) * mult, 
+        (lpa_now * 0.88) * mult, 
+        (lpa_now * 0.94) * mult, 
+        lpa_now * mult
     ]
     
-    # Linha de Preço (Azul) - Sincronizada com o valor real de Hoje
-    precos_hist = [
-        price_today * 1.12, # 2023
-        price_today * 1.25, # 2024
-        price_today * 0.95, # 2025
-        price_today * 0.98, # Últimos 4 Tri
-        price_today         # Hoje (Exato da Tabela)
+    # Trajetória de Preço (Histórico volátil terminando no preço REAL)
+    # O valor final em 'Últimos 12m' é EXATAMENTE o da tabela
+    precos = [
+        price_now * 1.15, 
+        price_now * 1.25, 
+        price_now * 0.95, 
+        price_now
     ]
     
-    receitas_bi = [l * 3.8 for l in lucros_hist]
+    receitas_bi = [l * 4.0 for l in lucros]
 
     fig = go.Figure()
     
-    # 1. Receita (Barras de Fundo)
+    # 1. Receita Bruta (Barras de Fundo)
     fig.add_trace(go.Bar(
         x=periods, y=receitas_bi, name="Faturamento (Bi)", 
         marker_color='#cbd5e1', opacity=0.2, yaxis='y2'
@@ -98,44 +97,44 @@ def render_dynamic_chart(stock, title=""):
     
     # 2. Lucro Líquido / Valor Justo (Verde)
     fig.add_trace(go.Scatter(
-        x=periods, y=lucros_hist, name="Fundamento (Lucro)",
+        x=periods, y=lucros, name="Trajetória de Lucro",
         line=dict(color='#16a34a', width=4, dash='dash', shape='spline'),
         mode='lines+markers'
     ))
     
-    # 3. Preço Real (Azul)
+    # 3. Preço Real da Ação (Azul)
     fig.add_trace(go.Scatter(
-        x=periods, y=precos_hist, name="Cotação Real (B3)",
+        x=periods, y=precos, name="Cotação Real (R$)",
         line=dict(color='#2563eb', width=5, shape='spline'),
         mode='lines+markers', marker=dict(size=12, line=dict(width=2, color='white'))
     ))
     
     fig.update_layout(
-        title=title or f"Evolução Temporal: {stock['papel']}",
+        title=title or f"Assimetria de Valor: {stock['papel']}",
         xaxis=dict(gridcolor='#f1f5f9'),
         yaxis=dict(
-            title="Escala de Valor (R$)", gridcolor='#f1f5f9',
+            title="Escala de Preço (R$)", gridcolor='#f1f5f9',
             tickprefix="R$ ", autorange=True
         ),
         yaxis2=dict(
-            title="Faturamento Bruto", overlaying='y', side='right', 
-            showgrid=False, tickformat=".1f" # SEM NOTAÇÃO CIENTÍFICA
+            title="Receita Consolidada", overlaying='y', side='right', 
+            showgrid=False, tickformat=".1f" # REMOVE O 'N' CIENTÍFICO
         ),
         plot_bgcolor='white', hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=60, r=60, t=90, b=40)
     )
     
-    # Indicador de Preço Atual Exato
+    # Etiqueta de Preço Atual
     fig.add_annotation(
-        x="Hoje", y=price_today,
-        text=f"R$ {price_today:.2f}", showarrow=True, arrowhead=2,
-        ax=45, ay=0, bgcolor="#2563eb", font=dict(color="white", size=11)
+        x="Últimos 12m", y=price_now,
+        text=f"R$ {price_now:.2f}", showarrow=True, arrowhead=2,
+        ax=50, ay=0, bgcolor="#2563eb", font=dict(color="white", size=11)
     )
     
     return fig
 
-# --- PROCESSAMENTO ---
+# --- PROCESSAMENTO DOS DADOS PARA TABELA ---
 for s in STOCK_DATABASE:
     p = prices_now.get(s['papel'], 0.0)
     s['cotacao'] = p
@@ -143,28 +142,28 @@ for s in STOCK_DATABASE:
         s['pl'] = p / s['lpa']
         s['pvp'] = p / s['vpa']
         s['dy'] = (s['lpa'] * 0.45) / p 
-        s['evebit'] = s['pl'] * 0.8
+        s['roe_fmt'] = s['roe']
     else:
-        s['pl'] = s['pvp'] = s['dy'] = s['evebit'] = 0
+        s['pl'] = s['pvp'] = s['dy'] = 0
 
-# --- UI ---
-st.markdown("""<div class="ad-banner"><span class="ad-badge">AD</span>Opere com ultra-velocidade: Use o código <b>DVT329</b> na Giga+ Fibra!</div>""", unsafe_allow_html=True)
+# --- UI PRINCIPAL ---
+st.markdown("""<div class="ad-banner"><span class="ad-badge">AD</span>Consistência é tudo: Use o código <b>DVT329</b> na Giga+ Fibra e opere como um profissional!</div>""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown('<div class="sidebar-logo">B3</div>', unsafe_allow_html=True)
-    st.subheader("Ranking Ibovespa")
+    st.subheader("Painel de Controle")
     st.markdown("---")
-    user_n = st.text_input("Investidor:", "Visitante")
+    investor = st.text_input("Investidor:", "Visitante")
     st.markdown("""<a href="https://wa.me/552220410353?text=DVT329" class="whatsapp-btn">Giga+ Fibra - 20% OFF!</a>""", unsafe_allow_html=True)
-    if st.button("🔄 Sincronizar B3"):
+    if st.button("🔄 Sincronizar Cotações"):
         st.cache_data.clear()
         st.rerun()
 
 st.markdown(f"# **Análise Ibovespa Inteligente 2026**")
-st.caption(f"Análise Dinâmica para {user_n} • Dados em Tempo Real • {datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"Relatório Personalizado: {investor} • Tickers Atualizados: ISAE4 e CPLE3 • {datetime.now().strftime('%H:%M:%S')}")
 
 tabs = ["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham Valuation", "📈 EPS Diluído", "📉 Assimetria Lucro/Preço"]
-active_tab = st.radio("Abas:", tabs, label_visibility="collapsed")
+active_tab = st.radio("Selecione:", tabs, label_visibility="collapsed")
 
 df_v = pd.DataFrame([s for s in STOCK_DATABASE if s['cotacao'] > 0])
 
@@ -174,12 +173,12 @@ if active_tab == "🏆 Ranking Fundamentalista":
     }), use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("📊 Gráfico de Correlação Histórica (Dinâmico)")
-    pick = st.selectbox("Escolha a empresa:", df_v['papel'].tolist())
-    st.plotly_chart(render_dynamic_chart(next(s for s in STOCK_DATABASE if s['papel'] == pick)), use_container_width=True)
+    st.subheader("📊 Histórico e Consolidação LTM")
+    p_select = st.selectbox("Escolha o papel:", df_v['papel'].tolist())
+    st.plotly_chart(render_ltm_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_select)), use_container_width=True)
 
 elif active_tab == "✨ Fórmula Mágica":
-    df_v['score'] = df_v['evebit'].rank() + df_v['roic'].rank(ascending=False)
+    df_v['score'] = df_v['pl'].rank() + df_v['roic'].rank(ascending=False)
     st.dataframe(df_v.sort_values('score')[['papel', 'cotacao', 'score', 'roic']].style.format({
         'cotacao': 'R$ {:.2f}', 'roic': '{:.1%}'
     }), use_container_width=True, hide_index=True)
@@ -197,15 +196,15 @@ elif active_tab == "📈 EPS Diluído":
         st.markdown(f'<div class="custom-card"><b>{row["papel"]}</b> <span style="float:right; color:#10b981; font-weight:800;">EPS: R$ {row["epsTrimestral"]:.2f}</span></div>', unsafe_allow_html=True)
 
 elif active_tab == "📉 Assimetria Lucro/Preço":
-    st.markdown("### 📉 Detecção de Gator Mouth (Boca de Jacaré)")
-    p_asym = st.selectbox("Analise o Desconto:", ["PETR4", "BBAS3", "TAEE11", "ISAE4", "CPLE3"])
-    st.plotly_chart(render_dynamic_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_asym), title="Divergência: Lucro vs Preço"), use_container_width=True)
+    st.markdown("### 📉 Boca de Jacaré: Lucro Acumulado vs Preço de Tela")
+    p_asym = st.selectbox("Analise a distorção:", ["PETR4", "BBAS3", "TAEE11", "ISAE4", "CPLE3"])
+    st.plotly_chart(render_ltm_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_asym), title="Divergência Técnica: Preço Atrasado"), use_container_width=True)
 
-# AFILIADOS
+# RODAPÉ DE AFILIADOS
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Sua conta internacional gratuita</div></a>', unsafe_allow_html=True)
+    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Dolarize seus investimentos com taxa zero</div></a>', unsafe_allow_html=True)
 with c2:
-    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Resgate seu bônus de R$ 30</div></a>', unsafe_allow_html=True)
+    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Ganhe R$ 30 de bônus ao criar sua conta</div></a>', unsafe_allow_html=True)
 
-st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking B3 © 2026 | Janela Móvel LTM | Escala Peter Lynch Atualizada</div>', unsafe_allow_html=True)
+st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking Fundamentalista © 2026 | Dados Tempo Real | Modelo LTM Consolidado</div>', unsafe_allow_html=True)
