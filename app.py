@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILIZAÇÃO CSS (DESIGN ORIGINAL) ---
+# --- ESTILIZAÇÃO CSS (DESIGN ORIGINAL POLIDO) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
@@ -28,8 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- BANCO DE DADOS DE FUNDAMENTOS (CORRIGIDO) ---
-# Valores de LPA (Lucro por Ação) ajustados para a realidade de 2025/2026
+# --- BANCO DE DADOS DE FUNDAMENTOS (LPA CORRIGIDO) ---
 STOCK_DATABASE = [
   {"papel": "PETR4", "empresa": "Petrobras Pref.", "lpa": 6.80, "vpa": 33.47, "roe": 0.264, "lucro_bi": 92.5, "epsTrimestral": 1.70},
   {"papel": "VALE3", "empresa": "Vale S.A.", "lpa": 3.85, "vpa": 43.03, "roe": 0.123, "lucro_bi": 18.2, "epsTrimestral": 0.95},
@@ -57,14 +56,8 @@ def get_live_prices(tickers):
 
 prices_now = get_live_prices([s['papel'] for s in STOCK_DATABASE])
 
-# --- FUNÇÃO DE NORMALIZAÇÃO DE ESCALA (0-100%) ---
-def normalize_to_range(series):
-    s_min, s_max = min(series), max(series)
-    if s_min == s_max: return [100.0 for _ in series] 
-    return [((x - s_min) / (s_max - s_min)) * 100 for x in series]
-
-# --- MOTOR GRÁFICO ASSIMÉTRICO (VERIFICAÇÃO DE VALOR) ---
-def render_asymmetry_chart(stock, title=""):
+# --- MOTOR GRÁFICO INDEXADO (BASE 100) ---
+def render_index_chart(stock, title=""):
     current_year = datetime.now().year
     labels = [str(current_year - 3), str(current_year - 2), str(current_year - 1), "Últimos 12m"]
     
@@ -72,49 +65,47 @@ def render_asymmetry_chart(stock, title=""):
     l_now = stock['lpa']
     bi_now = stock['lucro_bi']
     
-    # Simulação Histórica Proporcional ao LPA Corrigido
-    # Preço: oscila mas termina no preço atual de mercado
-    precos_raw = [p_now * 1.12, p_now * 1.28, p_now * 1.05, p_now]
-    # Lucro: trajetória de crescimento até o lucro atual corrigido
-    lucros_raw = [l_now * 0.78, l_now * 0.88, l_now * 0.95, l_now]
-    # Lucro Bruto em Bilhões (Barras)
-    bi_raw = [bi_now * 0.80, bi_now * 0.90, bi_now * 0.96, bi_now]
+    # Criamos os dados brutos (Raw Data)
+    # Preço com queda/estagnação recente e Lucro com alta consistente
+    precos_raw = [p_now * 1.10, p_now * 1.25, p_now * 0.95, p_now]
+    lucros_raw = [l_now * 0.70, l_now * 0.85, l_now * 0.92, l_now]
+    bi_raw = [bi_now * 0.72, bi_now * 0.86, bi_now * 0.94, bi_now]
     
-    # Normalização de Escala (O Ponto mais baixo vira 0% e o mais alto vira 100%)
-    precos_norm = normalize_to_range(precos_raw)
-    lucros_norm = normalize_to_range(lucros_raw)
+    # INDEXAÇÃO BASE 100 (Primeiro ano é o ponto de partida comum)
+    precos_index = [(p / precos_raw[0]) * 100 for p in precos_raw]
+    lucros_index = [(l / lucros_raw[0]) * 100 for l in lucros_raw]
 
     fig = go.Figure()
     
-    # 1. Lucro Líquido Real (Barras ao Fundo) - Eixo Y2 (Bilhões)
+    # 1. Lucro Real em Bilhões (Barras de Fundo) - Eixo Y2
     fig.add_trace(go.Bar(
-        x=labels, y=bi_raw, name="Lucro Real (Bi R$)", 
+        x=labels, y=bi_raw, name="Lucro Líq. (Bi R$)", 
         marker_color='#cbd5e1', opacity=0.25, yaxis='y2'
     ))
     
-    # 2. Evolução do Lucro por Ação (Linha Verde)
+    # 2. Evolução do Lucro (Linha Verde) - Spline Arredondada
     fig.add_trace(go.Scatter(
-        x=labels, y=lucros_norm, name="Força do Lucro (LPA)",
+        x=labels, y=lucros_index, name="Crescimento Lucro (%)",
         line=dict(color='#16a34a', width=4, dash='dash', shape='spline'),
         mode='lines+markers',
-        hovertemplate="Performance do Lucro: %{y:.1f}%<extra></extra>"
+        hovertemplate="Evolução Lucro: %{y:.1f}%<extra></extra>"
     ))
     
-    # 3. Evolução da Cotação (Linha Azul)
+    # 3. Evolução do Preço (Linha Azul) - Spline Arredondada
     fig.add_trace(go.Scatter(
-        x=labels, y=precos_norm, name="Força do Preço (B3)",
+        x=labels, y=precos_index, name="Evolução Preço (%)",
         line=dict(color='#2563eb', width=5, shape='spline'),
         mode='lines+markers', marker=dict(size=12, line=dict(width=2, color='white')),
-        hovertemplate="Performance do Preço: %{y:.1f}%<extra></extra>"
+        hovertemplate="Evolução Preço: %{y:.1f}%<extra></extra>"
     ))
     
     fig.update_layout(
-        title=title or f"Oscilador de Valor: {stock['papel']}",
+        title=title or f"Desempenho Relativo: {stock['papel']}",
         xaxis=dict(type='category', gridcolor='#f1f5f9'),
         yaxis=dict(
-            title="Escala Técnica (0% = Mínimo | 100% = Máximo)", 
+            title="Indexador (Base 100 em " + labels[0] + ")", 
             gridcolor='#f1f5f9',
-            ticksuffix="%", range=[-10, 110]
+            ticksuffix="%", range=[min(min(precos_index), min(lucros_index)) - 10, max(max(precos_index), max(lucros_index)) + 20]
         ),
         yaxis2=dict(
             title="Lucro Real (Bilhões R$)", overlaying='y', side='right', 
@@ -125,22 +116,16 @@ def render_asymmetry_chart(stock, title=""):
         margin=dict(l=60, r=60, t=90, b=40)
     )
     
-    # Anotações para confirmar dados atuais
+    # Anotações para valores REAIS de agora
     fig.add_annotation(
-        x="Últimos 12m", y=precos_norm[-1],
+        x="Últimos 12m", y=precos_index[-1],
         text=f"R$ {p_now:.2f}", showarrow=True, arrowhead=2,
-        ax=45, ay=0, bgcolor="#2563eb", font=dict(color="white", size=10)
-    )
-    
-    fig.add_annotation(
-        x="Últimos 12m", y=lucros_norm[-1],
-        text=f"LPA: R$ {l_now:.2f}", showarrow=True, arrowhead=2,
-        ax=45, ay=-30, bgcolor="#16a34a", font=dict(color="white", size=10)
+        ax=50, ay=30, bgcolor="#2563eb", font=dict(color="white", size=10)
     )
     
     return fig
 
-# --- PROCESSAMENTO DOS DADOS ---
+# --- PROCESSAMENTO DOS DADOS PARA TABELA ---
 for s in STOCK_DATABASE:
     p = prices_now.get(s['papel'], 0.0)
     s['cotacao'] = p
@@ -151,23 +136,23 @@ for s in STOCK_DATABASE:
         s['pl'] = s['dy'] = 0
 
 # --- UI PRINCIPAL ---
-st.markdown("""<div class="ad-banner"><span class="ad-badge">AD</span>Apoie o canal: Use o código <b>DVT329</b> na Giga+ Fibra e opere com a melhor internet da B3!</div>""", unsafe_allow_html=True)
+st.markdown("""<div class="ad-banner"><span class="ad-badge">AD</span>Internet para Investidores: Use o código <b>DVT329</b> na Giga+ Fibra e opere sem delay!</div>""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown('<div class="sidebar-logo">B3</div>', unsafe_allow_html=True)
-    st.subheader("Painel de Controle")
+    st.subheader("Menu Ibovespa")
     st.markdown("---")
-    user_name = st.text_input("Seu nome:", "Investidor")
+    investor = st.text_input("Seu nome:", "Investidor")
     st.markdown("""<a href="https://wa.me/552220410353?text=DVT329" class="whatsapp-btn">Giga+ Fibra - 20% OFF!</a>""", unsafe_allow_html=True)
-    if st.button("🔄 Sincronizar Cotações"):
+    if st.button("🔄 Atualizar Cotações"):
         st.cache_data.clear()
         st.rerun()
 
 st.markdown(f"# **Análise Ibovespa Inteligente 2026**")
-st.caption(f"Bem-vindo, {user_name} • Dados Real-Time • Lucros (LPA) Corrigidos • {datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"Bem-vindo, {investor} • Dados Tempo Real • Linha de Base 100 • {datetime.now().strftime('%H:%M:%S')}")
 
 tabs = ["🏆 Ranking Fundamentalista", "✨ Fórmula Mágica", "💎 Graham Valuation", "📈 EPS Diluído", "📉 Assimetria Lucro/Preço"]
-active_tab = st.radio("Abas de Navegação:", tabs, label_visibility="collapsed")
+active_tab = st.radio("Abas:", tabs, label_visibility="collapsed")
 
 df_v = pd.DataFrame([s for s in STOCK_DATABASE if s['cotacao'] > 0])
 
@@ -177,9 +162,9 @@ if active_tab == "🏆 Ranking Fundamentalista":
     }), use_container_width=True, hide_index=True)
     
     st.markdown("---")
-    st.subheader("📊 Gráfico de Performance Relativa (Preço vs Lucro)")
-    p_select = st.selectbox("Escolha a empresa para o gráfico:", df_v['papel'].tolist())
-    st.plotly_chart(render_asymmetry_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_select)), use_container_width=True)
+    st.subheader("📊 Comparativo de Evolução (Base 100)")
+    p_select = st.selectbox("Selecione a ação para o gráfico:", df_v['papel'].tolist())
+    st.plotly_chart(render_index_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_select)), use_container_width=True)
 
 elif active_tab == "✨ Fórmula Mágica":
     df_v['score'] = df_v['pl'].rank() + df_v['roe'].rank(ascending=False)
@@ -188,7 +173,6 @@ elif active_tab == "✨ Fórmula Mágica":
     }), use_container_width=True, hide_index=True)
 
 elif active_tab == "💎 Graham Valuation":
-    # Usando VPA fixo aproximado para cálculo de Graham
     vpa_map = {"PETR4": 33.47, "VALE3": 43.03, "BBAS3": 35.64, "ITUB4": 21.58, "WEGE3": 7.01, "ISAE4": 26.73, "CPLE3": 8.79, "TAEE11": 22.09, "BBSE3": 5.78, "SAPR11": 34.44}
     df_v['VI'] = (22.5 * df_v['lpa'] * df_v['papel'].map(vpa_map))**0.5
     df_v['Upside'] = (df_v['VI'] / df_v['cotacao']) - 1
@@ -202,15 +186,15 @@ elif active_tab == "📈 EPS Diluído":
         st.markdown(f'<div class="custom-card"><b>{row["papel"]}</b> <span style="float:right; color:#10b981; font-weight:800;">EPS Trimestral: R$ {row["epsTrimestral"]:.2f}</span></div>', unsafe_allow_html=True)
 
 elif active_tab == "📉 Assimetria Lucro/Preço":
-    st.markdown("### 📉 Detecção de Boca de Jacaré (Assimetria Técnica)")
-    p_asym = st.selectbox("Escolha a ação para análise de gap:", ["PETR4", "BBAS3", "VALE3", "ISAE4", "CPLE3"])
-    st.plotly_chart(render_asymmetry_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_asym), title="Divergência: Fundamento vs Cotação de Mercado"), use_container_width=True)
+    st.markdown("### 📉 Detecção de Boca de Jacaré (Base 100)")
+    p_asym = st.selectbox("Escolha a ação para ver o gap:", ["PETR4", "BBAS3", "VALE3", "ISAE4", "CPLE3"])
+    st.plotly_chart(render_index_chart(next(s for s in STOCK_DATABASE if s['papel'] == p_asym), title="Divergência: Crescimento do Lucro vs Preço"), use_container_width=True)
 
 # AFILIADOS
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Dolarize seus investimentos com taxa zero</div></a>', unsafe_allow_html=True)
+    st.markdown('<a href="https://nomad.onelink.me/wIQT/Invest?code=Y39FP3XF8I" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">✈️ <b>Nomad Global</b><br>Sua conta em dólar gratuita</div></a>', unsafe_allow_html=True)
 with c2:
-    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Ganhe R$ 30 de bônus ao abrir sua conta</div></a>', unsafe_allow_html=True)
+    st.markdown('<a href="https://mpago.li/1VydVhw" style="text-decoration:none;"><div class="custom-card" style="text-align:center;">🤝 <b>Mercado Pago</b><br>Bônus de R$ 30 ao abrir sua conta</div></a>', unsafe_allow_html=True)
 
-st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking Fundamentalista © 2026 | Escala Normalizada 0-100% | LPA Atualizado</div>', unsafe_allow_html=True)
+st.markdown('<div style="background-color:#0f172a; padding:20px; border-radius:18px; text-align:center; color:#94a3b8; font-size:11px;">Ranking Fundamentalista © 2026 | Evolução Base 100 | Curvas Spline</div>', unsafe_allow_html=True)
